@@ -3,24 +3,27 @@ const crypto = require("crypto");
 const fs = require("fs");
 const os = require("os");
 const pty = require("node-pty");
-// 启动时顺手确认 node-pty 的 spawn-helper 有可执行位（见 scripts/fix-node-pty-perms.js，
-// 没有的话 pty.spawn 会直接抛 "posix_spawnp failed."）。幂等，通常什么都不做。
+// At startup, make sure node-pty's spawn-helper has its executable bit (see
+// scripts/fix-node-pty-perms.js; without it pty.spawn throws "posix_spawnp failed."). Idempotent,
+// usually does nothing.
 try {
   require("../scripts/fix-node-pty-perms").fixNodePtyPerms();
 } catch (e) {
-  // 修不了（只读文件系统之类）就算了，真有问题下面 spawn 时会报出来
+  // If it cannot be fixed (read-only file system and the like), never mind; a real problem will surface at spawn below
 }
 
 const SCROLLBACK_LIMIT = 5000;
 
-// 如果启动 CC-Monitor 这个 Node 进程本身就是在一个 Claude Code 会话里面（比如开发时
-// 直接在 claude 里跑 `node server.js`——这本来就是个很正常的用法），process.env 就会
-// 带着那个"外层"会话的 CLAUDE_CODE_SESSION_ID / CLAUDE_CODE_CHILD_SESSION 等变量。
-// 新建的终端会话如果原样继承这些变量，spawn 出来的 claude 会被当成那个外层会话的
-// "子会话"，不会把自己当独立顶层会话对待——观察到的直接后果是它根本不写自己的
-// transcript .jsonl 文件（Web UI 这边模型ID、token 用量这些依赖 transcript 的信息就永远
-// 是空的，跟目录是不是 /tmp 没关系，纯粹是环境变量污染）。建终端前把这些变量摘掉，
-// 让每个 Web UI 终端会话里跑起来的 claude 都是货真价实的独立顶层会话。
+// If the CC-Monitor Node process itself was started inside a Claude Code session (e.g. running
+// `node server.js` directly in claude during development, a perfectly normal thing to do),
+// process.env carries that "outer" session's CLAUDE_CODE_SESSION_ID / CLAUDE_CODE_CHILD_SESSION
+// and similar variables. If a new terminal session inherits them unchanged, the claude it spawns
+// is treated as a "child session" of the outer session rather than an independent top-level
+// session. The observed effect is that it never writes its own transcript .jsonl file (so the
+// transcript-based info in the Web UI, model ID and token usage, is always empty; nothing to do
+// with whether the directory is /tmp, it is purely environment variable pollution). Strip these
+// variables before creating the terminal so the claude in every Web UI terminal session is a
+// genuine independent top-level session.
 const CLAUDE_ENV_PREFIX = /^(CLAUDE_CODE_|CLAUDECODE$|CLAUDE_PID$|CLAUDE_EFFORT$)/;
 function cleanEnv() {
   const env = {};
@@ -30,9 +33,10 @@ function cleanEnv() {
   return env;
 }
 
-// Claude Code 的信任确认框是用逐词 "ESC[<N>G"（光标绝对定位）画出来的，不是普通空格，
-// 所以原始数据流里 "Yes, I trust this folder" 根本不是连续子串。这里把 ANSI 转义序列
-// 和空白都去掉再比较，"trustthisfolder" 在去空白之后必然是连续的。
+// Claude Code draws its trust confirmation prompt word by word with "ESC[<N>G" (absolute cursor
+// positioning), not ordinary spaces, so "Yes, I trust this folder" is never a contiguous substring
+// of the raw stream. Strip ANSI escape sequences and whitespace before comparing;
+// "trustthisfolder" is always contiguous once whitespace is gone.
 function stripAnsiAndSpace(s) {
   return s
     .replace(/\x1b\][^\x07]*(\x07|\x1b\\)/g, "")
@@ -72,13 +76,14 @@ class SessionManager {
       lastOutputAt: Date.now(),
     };
 
-    // Claude Code 第一次在某个还没被信任过的目录里启动时，会弹一个"是否信任这个文件夹"
-    // 的确认框，默认高亮的选项是 "No, exit"。这里没人替它确认的话，Claude Code 就会
-    // 一直卡在这个框上；要是这之后又有任何键盘输入以回车结束（哪怕只是用户正常打字），
-    // 就会直接选中 "No, exit" 把 Claude Code 退出、回到裸 shell——界面上看起来完全正常
-    // （zsh 提示符能用），但其实 Claude Code 已经没了。既然这个终端本来就是从我们自己
-    // "新建会话"这个入口开的，打开这个目录这件事用户已经等于确认过一遍了，这里检测到
-    // 这个确认框就自动按下方向键+回车替它选 "Yes, I trust this folder"。
+    // The first time Claude Code starts in a directory it has not trusted yet, it shows a "trust
+    // this folder?" confirmation prompt whose default highlighted option is "No, exit". If nobody
+    // answers it, Claude Code stays stuck on that prompt; and if any later keyboard input ends
+    // with Enter (even the user's normal typing), it selects "No, exit", quits Claude Code and
+    // drops back to a bare shell. The screen looks perfectly normal (the zsh prompt works), but
+    // Claude Code is gone. Since this terminal was opened from our own "new session" entry point,
+    // the user has effectively already confirmed opening this directory, so when the prompt is
+    // detected we press Down + Enter to choose "Yes, I trust this folder".
     let trustPromptHandled = false;
     let recentOutput = "";
 
@@ -110,8 +115,9 @@ class SessionManager {
 
     this.sessions.set(id, session);
 
-    // "新建窗口"（launchClaude:false）要的就是一个裸 shell，不自动敲 claude——
-    // 跟"新建会话"共用同一套 PTY/信任确认框逻辑，唯一区别就这一行要不要执行。
+    // "New window" (launchClaude:false) wants a bare shell that does not type claude
+    // automatically. It shares the PTY / trust-prompt logic with "new session"; the only
+    // difference is whether this one line runs.
     if (launchClaude) {
       // Launch Claude Code directly in this session's shell, like a user typing it.
       setTimeout(() => {
@@ -151,7 +157,7 @@ class SessionManager {
     try {
       s.pty.write(data);
     } catch (e) {
-      // pty 刚好在这一瞬间退出了；不用管，onExit 回调会把 alive 标记更新掉
+      // The pty happened to exit at this instant; ignore it, the onExit callback updates the alive flag
     }
   }
 

@@ -1,8 +1,8 @@
 "use strict";
-// 端到端冒烟测试：自己起一个隔离的 server 实例（独立端口 + 临时 CC_MONITOR_HOME），
-// 不碰正在跑的那个真实实例，跑完自动清理。
+// End-to-end smoke test: starts its own isolated server instance (separate port + temporary CC_MONITOR_HOME),
+// leaves the real running instance alone, and cleans up afterwards.
 //
-// 用法: node --test test/smoke.test.js
+// Usage: node --test test/smoke.test.js
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
@@ -39,8 +39,8 @@ function waitForServer(timeoutMs = 8000) {
   return tryOnce();
 }
 
-// 用真实的 Python cc_monitor.storage 模块写入几条测试事件，这样能验证 webui 的
-// JS 格式化逻辑跟 Python 那边写进去的真实 schema 是兼容的，而不是自娱自乐。
+// Writes a few test events with the real Python cc_monitor.storage module, so this verifies that the webui's JS
+// formatting is compatible with the real schema Python writes, rather than only agreeing with itself.
 function seedAuditEvents(ccMonitorHome) {
   const script = `
 import os
@@ -165,7 +165,7 @@ test("audit endpoints reflect seeded events with correct formatting", async () =
 
   const completedEvent = logs.body.events.find((e) => e.decision === "completed");
   assert.ok(completedEvent);
-  assert.match(completedEvent.extra.map((e) => e.html).join(""), /成功/);
+  assert.match(completedEvent.extra.map((e) => e.html).join(""), /Success/);
 
   const stats = await fetchJson("/api/stats");
   assert.ok(stats.body.total >= 3);
@@ -179,8 +179,8 @@ test("audit endpoints reflect seeded events with correct formatting", async () =
   assert.ok(status.body.auditSessions.some((s) => s.sessionId === "test-session-1"));
 });
 
-// 时间线分桶在 JS 里按 new Date(ts) 做（SQLite 解析不了 Python %z 写出的无冒号偏移），
-// 这里用 Python 真实写入的 ts 验证分桶没有因为时间解析失败而全部丢掉。
+// Timeline bucketing is done in JS with new Date(ts) (SQLite cannot parse the colon-less offset Python's %z
+// writes); this uses a ts really written by Python to check that bucketing does not drop everything on a parse failure.
 test("timeline endpoint buckets seeded events per session", async () => {
   const { status, body } = await fetchJson("/api/timeline?range_minutes=60");
   assert.equal(status, 200);

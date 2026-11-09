@@ -1,15 +1,18 @@
 "use strict";
-// Claude Code 网络流量——主数据来自系统层探针（cc_monitor/probe_linux.bt，Linux +
-// eBPF；macOS 是 probe_darwin.py + nettop）写进 events.db 的 network_traffic 表：按
-// (ip, port) 聚合的连接次数/上传下载字节数。探针没装、没在跑的时候这张表是空的。
+// Claude Code network traffic. The main data comes from the system-layer probe
+// (cc_monitor/probe_linux.bt on Linux + eBPF; probe_darwin.py + nettop on macOS), which writes the
+// network_traffic table in events.db: connection counts and upload/download bytes aggregated by
+// (ip, port). When the probe is not installed or not running this table is empty.
 //
-// 补充数据来自 Claude 通过 Bash 执行的、命令文本上看起来会联网的操作（wget/curl/
-// git clone/ssh/scp/…，见 audit.js 的 commandNetworkHosts()）——很多人从来没手动
-// 启动过系统层探针，之前这种情况下"AI 轨迹"/世界地图完全是空的，即使 Claude 明明
-// 执行过一堆联网命令。这类数据只是"命令文本上看起来要连这个 host"，不代表真的连
-// 通了（可能失败/超时/被 policy 拦截），也没有字节数——跟探针实测数据是两种不同
-// 性质的证据，下面统一加了 inferred:true 标记，前端会展示区分，不会冒充成真实
-// 流量。
+// Supplementary data comes from operations Claude ran through Bash whose command text looks like
+// it goes online (wget/curl/git clone/ssh/scp/..., see commandNetworkHosts() in audit.js). Many
+// people never start the system-layer probe by hand, and before this the "AI trail" / world map
+// was completely empty in that case even though Claude had clearly run a pile of networked
+// commands. This data only means "the command text looks like it connects to this host"; it does
+// not prove the connection succeeded (it may have failed, timed out or been blocked by policy),
+// and it has no byte counts. It is a different kind of evidence from the probe's measured data,
+// so it is all marked inferred:true below; the frontend shows the difference and never passes it
+// off as real traffic.
 const Database = require("better-sqlite3");
 const audit = require("./audit");
 const { dbPath } = audit;
@@ -41,18 +44,20 @@ function rawRows(limit) {
   }, []);
 }
 
-// 探针在同一个长连接上可能因为路由/多网卡之类原因拿到 port=0 且没传字节的记录
-// （见 probe.py 里的说明），这种行除了"确实连过一次"以外没有别的信息量，列表里
-// 全是这种噪音的话反而看不清真正的流量在哪，默认过滤掉。
+// On one long-lived connection the probe may record rows with port=0 and no bytes because of
+// routing / multiple NICs and the like (see the notes in probe.py). Such a row says nothing
+// beyond "a connection happened once", and a list full of that noise hides where the real
+// traffic is, so they are filtered out by default.
 function isNoiseRow(r) {
   return r.port === 0 && r.tx_bytes === 0 && r.rx_bytes === 0;
 }
 
-// 把 commandNetworkHosts() 拿到的"命令里出现过的 host"按 host 分组去重、解析成 IP，
-// 拼成跟 rawRows() 同一种形状的行，好复用下面这几个函数里已经有的 geoip 查询/排序/
-// 过滤逻辑，不用另外写一套。解析不出 IP 的 host（域名失效/网络问题/超时）直接跳过，
-// 不硬凑一个假地址；探针已经实测到同一个 IP 的，不再重复生成一条推断行——那个 IP
-// 已经有更可信的真实流量数据了。
+// Group the "hosts seen in commands" from commandNetworkHosts() by host, deduplicate and resolve
+// them to IPs, and build rows of the same shape as rawRows(), so the geoip lookup / sort / filter
+// logic in the functions below can be reused instead of writing another set. Hosts that do not
+// resolve (dead domain / network problem / timeout) are skipped rather than forced into a fake
+// address; when the probe has already measured the same IP, no inferred row is generated for it,
+// since that IP already has more trustworthy real traffic data.
 async function inferredRows(existingIps) {
   const entries = audit.commandNetworkHosts();
   const byHost = new Map();
@@ -128,9 +133,10 @@ async function summary() {
   return { txBytes, rxBytes, connectCount, distinctIps: ips.size };
 }
 
-// 世界地图用的数据形状——只要有经纬度的行才有意义画到地图上，拿不到地理位置的
-// （没配置 GeoIP 数据库，或者这个 IP 查不到）不会出现在这个列表里，但仍然会出现在
-// listTraffic() 的表格里（如实标"未知位置"，不是被吞掉了）。
+// Data shape for the world map: only rows with coordinates make sense on the map. Rows without a
+// location (no GeoIP database configured, or the IP is not found) do not appear in this list,
+// but they still appear in the listTraffic() table (honestly labelled "unknown location", not
+// swallowed).
 async function geoPairs(limit = 500, lang = "en") {
   const rows = await mergedRows(limit);
   const pairs = [];
@@ -145,8 +151,9 @@ async function geoPairs(limit = 500, lang = "en") {
       country: geo.country,
       city: geo.city,
       bytes: r.tx_bytes + r.rx_bytes,
-      // 世界地图的"连线光点来回"动画要按方向画（上传为主 vs 下载为主，箭头朝向不一样）：
-      // 单独把 tx/rx 拆出来，而不是只给合计的 bytes。
+      // The world map's "dots travelling along the line" animation is drawn by direction (mostly
+      // upload vs mostly download, arrows point differently), so tx/rx are split out separately
+      // instead of giving only the total bytes.
       txBytes: r.tx_bytes,
       rxBytes: r.rx_bytes,
       lastSeen: r.last_seen,

@@ -1,16 +1,18 @@
 "use strict";
-// 把一个会话的原始审计事件组装成"操作流程图"：按用户提问切成一轮一轮，每轮里是按
-// 时间先后排的操作节点；每个操作节点 = 一次工具调用的"准备执行(hook_pre)"和"执行
-// 完成(hook_post)"两条记录合并而成，并判定这次操作最终成功还是失败。
+// Assembles a session's raw audit events into a "session flow" diagram: split into turns at each user prompt,
+// each turn holding operation nodes in time order. Each node merges the two records of one tool call, "about to
+// run" (hook_pre) and "completed" (hook_post), and decides whether the operation finally succeeded or failed.
 //
-// 成败怎么判定——Claude Code 的 PostToolUse hook 只在工具执行成功时才触发（报错、
-// 被用户拒绝、被中断时不触发），所以：
-//   - 有 hook_post：执行成功；再看返回内容里有没有中断/超时/HTTP 错误码/success=false
-//     这类"工具本身跑完了但结果是失败"的标记，以及 Bash 有没有 stderr 输出。
-//   - 只有 hook_pre、没有 hook_post：要么被我们的规则拦截（decision=blocked），要么
-//     还在跑（会话最近还活跃、这一轮还没结束），否则就是执行失败/被拒绝/被中断。
-// hook 记录里没有 tool_use_id，只能按"同一个工具、输入参数完全相同、先进先出"配对
-// ——hook_post 里原样带了一份 input，跟 hook_pre 的 detail 是同一个对象。
+// How success is decided: Claude Code's PostToolUse hook fires only when the tool ran successfully (not on an
+// error, a user rejection or an interruption), so:
+//   - hook_post present: it ran. Then check the returned content for markers that "the tool finished but the
+//     result is a failure" (interrupted / timeout / HTTP error code / success=false), and whether Bash wrote
+//     to stderr.
+//   - Only hook_pre, no hook_post: either blocked by our rules (decision=blocked), or still running (the
+//     session was active recently and this turn has not ended); otherwise it failed / was rejected / was
+//     interrupted.
+// Hook records carry no tool_use_id, so pairing is "same tool, identical input, first in first out": hook_post
+// carries a copy of the input, the same object as hook_pre's detail.
 const fmt = require("./format");
 
 const RUNNING_WINDOW_MS = 10 * 60 * 1000;
@@ -45,7 +47,7 @@ function worseRisk(a, b) {
   return (RISK_RANK[a] || 0) >= (RISK_RANK[b] || 0) ? a : b;
 }
 
-// 有 hook_post 时：工具跑完了，看返回内容判断结果。
+// With hook_post: the tool finished; judge the result from the returned content.
 function postStatus(tool, resp) {
   if (!resp || typeof resp !== "object") return { status: "ok" };
   if (resp.success === false) return { status: "fail", reason: "reported", detail: String(resp.message || "").slice(0, 200) };
@@ -96,7 +98,7 @@ function makeOpNode({ pre, post, preDetail, postDetail }) {
   } else if (pre && pre.decision === "blocked") {
     node.status = "blocked";
   } else {
-    node.status = "pending"; // 暂定，等整轮看完再决定是"进行中"还是"未完成"
+    node.status = "pending"; // provisional; once the whole turn is seen, decide between "in progress" and "incomplete"
   }
   return node;
 }
@@ -162,8 +164,8 @@ function newTurn(idx, promptRow, promptDetail) {
   };
 }
 
-// 连续 GROUP_MIN 条以上"同一个工具、低风险、都成功"的操作合并成一个节点，
-// 避免 20 次连续 Read 把流程图拉得老长；明细保留在 items 里，前端可以展开。
+// Merges runs of GROUP_MIN or more operations that are "same tool, low risk, all succeeded" into one node, so 20
+// consecutive Reads do not stretch the diagram; the details stay in items and the front end can expand them.
 function groupRuns(nodes) {
   const out = [];
   let i = 0;
@@ -227,7 +229,7 @@ function buildSessionFlow(rows, { now = Date.now(), group = true } = {}) {
       } else if (row.tool_name === "SubagentStop") {
         turn.subagentStops++;
       } else if (row.tool_name === "SessionStart" && !turn.prompt && !turn.sessionStart) {
-        // 第一次提问之前的 SessionStart 就是"会话开始"那张标题卡本身，不再单独画一张卡
+        // A SessionStart before the first prompt is the "session started" title card itself; do not draw another card
         turn.sessionStart = { ts: row.ts, source: detail.source || null };
         if (!turn.startTs) turn.startTs = row.ts;
         if (!sessionStart) sessionStart = turn.sessionStart;
@@ -248,8 +250,8 @@ function buildSessionFlow(rows, { now = Date.now(), group = true } = {}) {
       node._preDetail = detail;
       node._turn = turn;
       turn.nodes.push(node);
-      // 被拦截的不会有 hook_post，不进待配对队列——否则之后原样重试的那次的 post
-      // 会被错配到这条被拦截的记录上
+      // Blocked calls never get a hook_post, so they stay out of the pairing queue; otherwise the post of a later
+      // identical retry would be paired with this blocked record
       if (row.decision !== "blocked") {
         if (!openPre.has(row.tool_name)) openPre.set(row.tool_name, []);
         openPre.get(row.tool_name).push({ node, key: canonical(detail) });
@@ -257,8 +259,8 @@ function buildSessionFlow(rows, { now = Date.now(), group = true } = {}) {
       continue;
     }
 
-    // hook_post：找输入参数完全相同的 pre 里最近的一条（失败过又原样重试时，post 属于
-    // 重试那次，不是之前失败的那次）；找不到再退回同名工具里最近的一条
+    // hook_post: pick the most recent pre with identical input (when a failed call is retried as is, the post
+    // belongs to the retry, not the earlier failure); if none, fall back to the most recent pre of the same tool
     const queue = openPre.get(row.tool_name) || [];
     const key = canonical(detail.input || {});
     let idx = queue.findLastIndex((q) => q.key === key);
@@ -276,7 +278,7 @@ function buildSessionFlow(rows, { now = Date.now(), group = true } = {}) {
   }
   pushTurn();
 
-  // 没等到 hook_post 的操作：这一轮还没结束、而且会话最近还活跃 → 进行中；否则就是没成功。
+  // Operations that never got a hook_post: turn not over and session active recently → in progress; otherwise it did not succeed.
   const lastRow = rows[rows.length - 1];
   const lastMs = lastRow ? tsMs(lastRow.ts) : null;
   const sessionRecent = lastMs !== null && now - lastMs < RUNNING_WINDOW_MS;

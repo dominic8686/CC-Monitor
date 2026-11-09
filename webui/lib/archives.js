@@ -5,10 +5,11 @@ const path = require("path");
 const Database = require("better-sqlite3");
 const { dbPath } = require("./audit");
 
-// 归档做的事情：把"当前"这份 events.db 用 SQLite 官方的 backup API 完整备份一份到
-// archives/ 目录下（backup() 内部会处理 WAL checkpoint，不会漏掉还没落盘的数据，
-// 也不用停掉正在写入的 hooks），再顺手统计一下这份快照里有多少事件/会话/时间范围，
-// 写一个同名 .json 元数据文件方便"历史数据记录列表"直接读，不用每次都打开 db 文件。
+// What archiving does: make a full copy of the "current" events.db into archives/ with SQLite's
+// official backup API (backup() handles the WAL checkpoint internally, so data not yet on disk
+// is not lost and the hooks that are writing need not stop), then count the events / sessions /
+// time range in the snapshot and write a .json metadata file of the same name, so the archive
+// history list can read it directly without opening the db file every time.
 function archivesDir() {
   return path.join(path.dirname(dbPath()), "archives");
 }
@@ -30,7 +31,7 @@ function statsFromDb(file) {
 async function createArchive(label) {
   const src = dbPath();
   if (!fs.existsSync(src)) {
-    return { ok: false, error: "还没有任何事件数据，无法归档" };
+    return { ok: false, error: "No event data yet, nothing to archive" };
   }
   const dir = archivesDir();
   fs.mkdirSync(dir, { recursive: true });
@@ -47,9 +48,10 @@ async function createArchive(label) {
     srcDb.close();
   }
 
-  // 备份出来的文件会继承源库的 WAL 日志模式，本身会带上 -wal/-shm 这两个附属文件。
-  // 归档是不会再被写入的快照，没必要留着 WAL；转成普通日志模式让它变成单个自包含的
-  // .db 文件，之后删除归档时也不用惦记着还有没有漏删的附属文件。
+  // The backup inherits the source database's WAL journal mode and carries -wal/-shm side files.
+  // An archive is a snapshot that is never written again, so WAL is pointless; switching to the
+  // normal journal mode makes it a single self-contained .db file, and deleting the archive later
+  // need not worry about leftover side files.
   const convertDb = new Database(destFile);
   try {
     convertDb.pragma("journal_mode = DELETE");
@@ -59,9 +61,9 @@ async function createArchive(label) {
 
   const stats = statsFromDb(destFile);
   if (stats.total === 0) {
-    // 没有数据的话不留一个空归档，把刚备份出来的空文件也清掉。
+    // No data: do not keep an empty archive; remove the empty file just backed up as well.
     fs.unlinkSync(destFile);
-    return { ok: false, error: "没有事件数据，无法归档" };
+    return { ok: false, error: "No event data, nothing to archive" };
   }
 
   const meta = {
@@ -95,7 +97,7 @@ function listArchives() {
 function deleteArchive(id) {
   const dir = archivesDir();
   const meta = listArchives().find((a) => a.id === id);
-  if (!meta) return { ok: false, error: "归档不存在" };
+  if (!meta) return { ok: false, error: "Archive not found" };
   for (const f of [meta.file, `${meta.file}-wal`, `${meta.file}-shm`, `${id}.json`]) {
     const p = path.join(dir, f);
     if (fs.existsSync(p)) fs.unlinkSync(p);
@@ -103,8 +105,9 @@ function deleteArchive(id) {
   return { ok: true };
 }
 
-// 打开一份历史归档，翻看里面具体是哪些事件——只读，不会碰当前的 events.db。
-// 支持 sinceId 增量翻页，归档里事件多的时候前端可以做"加载更多"而不是一次性全读出来。
+// Open one history archive and page through its events. Read-only, never touches the current
+// events.db. Supports incremental paging with sinceId, so for large archives the frontend can do
+// "Load more" instead of reading everything at once.
 function getArchiveEvents(id, { sinceId = 0, limit = 500 } = {}) {
   const dir = archivesDir();
   const meta = listArchives().find((a) => a.id === id);
@@ -124,9 +127,10 @@ function getArchiveEvents(id, { sinceId = 0, limit = 500 } = {}) {
   }
 }
 
-// 清空"当前"事件数据——不是归档,是真的丢弃。用可写连接对同一个 events.db 操作，
-// DELETE 之后把 AUTOINCREMENT 计数器也重置一下，这样清空后新事件的 id 重新从 1 开始，
-// 首页/日志页看着更干净，不会突然从一个很大的 id 跳出来。
+// Clear the "current" event data: not an archive, it really discards it. Uses a writable
+// connection to the same events.db; after DELETE the AUTOINCREMENT counter is reset too, so new
+// event ids start from 1 again and Home / the log page look cleaner instead of suddenly jumping
+// from a large id.
 function clearCurrentEvents() {
   const src = dbPath();
   if (!fs.existsSync(src)) return { ok: true, deletedCount: 0 };

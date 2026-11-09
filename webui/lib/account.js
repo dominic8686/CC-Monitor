@@ -1,9 +1,9 @@
 "use strict";
-// 账号资料（姓名/邮箱/组织/套餐）——不是走 Anthropic 的接口，是 Claude Code 自己
-// 落在本地的全局配置文件 ~/.claude.json 里的 oauthAccount 字段，ccstatusline 的
-// "Claude Account Email" 挂件读的就是这个文件（反编译它的 dist 包确认过路径和字段名）。
-// 纯本地文件读取，不涉及任何网络请求或凭证材料——oauthAccount 里没有 token，
-// 只有账号资料本身。
+// Account profile (name/email/organization/plan). This does not call an Anthropic API: it is the
+// oauthAccount field in ~/.claude.json, the global config file Claude Code keeps locally. The
+// "Claude Account Email" widget in ccstatusline reads the same file (path and field names
+// confirmed by decompiling its dist package). Purely a local file read, with no network request
+// and no credential material: oauthAccount holds no token, only the profile itself.
 const { execFileSync } = require("child_process");
 const fs = require("fs");
 const os = require("os");
@@ -28,15 +28,18 @@ function getAccountInfo() {
       info.accountCreatedAt = oa.accountCreatedAt || null;
       info.subscriptionCreatedAt = oa.subscriptionCreatedAt || null;
       info.billingType = oa.billingType || null;
-      // 标识符：本身没有使用价值，但排查"两个终端为什么互相看不到"这类问题时要用来对齐
-      // 身份。默认显示，"隐藏敏感信息"会把它们跟姓名/邮箱/组织一起打码（见 app.js）。
+      // Identifiers: no use on their own, but needed to match identities when tracking down
+      // problems like "why can't these two terminals see each other". Shown by default; "Hide
+      // sensitive info" masks them together with name/email/organization (see app.js).
       info.accountUuid = oa.accountUuid || null;
       info.organizationUuid = oa.organizationUuid || null;
     }
-    // 下面几个在 ~/.claude.json 顶层，不在 oauthAccount 里，是"这台机器上的 Claude Code
-    // 处于什么状态"而不是"账号是谁"——对本工具尤其有用：hook 依赖 Claude Code 的 hook
-    // 接口，版本不对是排查 hook 失灵的第一件事；MCP server 是供应链面；自动更新决定被
-    // 监控的程序会不会在脚下换版本；安装方式决定配置和二进制在哪。
+    // The fields below sit at the top level of ~/.claude.json, not in oauthAccount. They describe
+    // "what state Claude Code on this machine is in" rather than "who the account is", which is
+    // especially useful for this tool: the hook depends on Claude Code's hook interface, so the
+    // version is the first thing to check when hooks stop working; MCP servers are supply-chain
+    // surface; auto-update decides whether the monitored program can change version underfoot;
+    // the install method decides where the config and binary live.
     info.machineID = parsed?.machineID || null;
     info.userID = parsed?.userID || null;
     info.installMethod = parsed?.installMethod || null;
@@ -46,18 +49,19 @@ function getAccountInfo() {
       info.mcpServerCount = Object.keys(mcp).length;
       info.mcpServerNames = Object.keys(mcp);
     }
-    // 资料快照时间——整块面板读的是本地缓存文件不是实时接口，不说明数据有多旧是不诚实的。
+    // Snapshot time of the profile: the whole panel reads a local cache file, not a live API, so not saying how old the data is would be dishonest.
     if (parsed?.oauthAccount?.profileFetchedAt) {
       info.profileFetchedAt = parsed.oauthAccount.profileFetchedAt;
     }
   } catch (e) {
-    // 文件不存在/读不了/格式不对——账号信息留空就好，不当错误处理
-    // （usage.js 那边已经会在读不到登录凭证时单独报错）
+    // File missing, unreadable or malformed: just leave the account info empty, not an error
+    // (usage.js already reports its own error when it cannot read the login credentials)
   }
-  // subscriptionType/rateLimitTier 是 OAuth 凭证里的字段（Linux 在 .credentials.json，
-  // macOS 在钥匙串，见 lib/credentials.js），跟 oauthAccount 是两个不同的来源，两边字段
-  // 不完全重叠（比如这边这两个是 OAuth token 申请时记录的档位快照，可能跟
-  // oauthAccount.organizationType 不是同一个东西）。读不到就留空。
+  // subscriptionType/rateLimitTier are fields of the OAuth credentials (in .credentials.json on
+  // Linux, in the Keychain on macOS, see lib/credentials.js). That is a different source from
+  // oauthAccount and the fields do not fully overlap (for example these two are a snapshot of the
+  // tier recorded when the OAuth token was issued, and may not be the same thing as
+  // oauthAccount.organizationType). Left empty if unreadable.
   const oauth = readClaudeOauth();
   if (oauth) {
     info.subscriptionType = oauth.subscriptionType || null;
@@ -67,13 +71,15 @@ function getAccountInfo() {
   return info;
 }
 
-// Claude Code 的版本。`claude --version` 是唯一权威的答案，但每次请求都 spawn 一个进程
-// 太浪费，所以进程内缓存住——版本在 Web UI 的一个生命周期里不会变，真变了也是因为
-// Claude Code 升级，那时候本来就该重启这个服务。
+// Claude Code version. `claude --version` is the only authoritative answer, but spawning a
+// process on every request is wasteful, so it is cached in-process: the version does not change
+// during one Web UI lifetime, and if it does it is because Claude Code was upgraded, when this
+// service should be restarted anyway.
 //
-// 两级兜底：拿不到命令（不在 PATH 里）就看 ~/.local/share/claude/versions 下版本号最大的
-// 那个目录；再拿不到就退到 ~/.claude.json 的 lastClawdEntranceVersion。后两者都是近似值，
-// 所以回传时带上 approx 标记，界面上如实标出来，不假装是准确值。
+// Two fallback levels: if the command is unavailable (not on PATH), use the directory with the
+// highest version number under ~/.local/share/claude/versions; failing that, fall back to
+// lastClawdEntranceVersion in ~/.claude.json. Both are approximations, so the result carries an
+// approx flag and the UI labels it honestly instead of pretending it is exact.
 let versionCache = null;
 function claudeCodeVersion() {
   if (versionCache) return versionCache;
@@ -84,7 +90,7 @@ function claudeCodeVersion() {
     const m = out.match(/\d+\.\d+\.\d+/);
     if (m) return (versionCache = { value: m[0], approx: false });
   } catch (e) {
-    // 不在 PATH 里 / 超时 / 非零退出，继续往下兜
+    // Not on PATH / timed out / non-zero exit: keep falling back
   }
   try {
     const dir = path.join(os.homedir(), ".local", "share", "claude", "versions");
@@ -101,7 +107,7 @@ function claudeCodeVersion() {
       .pop();
     if (newest) return (versionCache = { value: newest, approx: true });
   } catch (e) {
-    /* 目录不存在就继续兜 */
+    /* Directory missing: keep falling back */
   }
   try {
     const parsed = JSON.parse(fs.readFileSync(CLAUDE_JSON_PATH, "utf8"));
@@ -109,7 +115,7 @@ function claudeCodeVersion() {
       return (versionCache = { value: parsed.lastClawdEntranceVersion, approx: true });
     }
   } catch (e) {
-    /* 读不到就返回 null */
+    /* Unreadable: return null */
   }
   return null;
 }

@@ -1,7 +1,8 @@
 "use strict";
-// 轻量的"状态信息"数据源：不追求跟 ccstatusline 完全一致（那个是靠 Claude Code
-// 自己喂的 transcript 元数据算 token/花费，hooks 拿不到这些），只汇总我们确实
-//能拿到的东西：cwd、git 分支/是否有未提交改动、活跃时长、审计事件计数。
+// Lightweight data source for the Status page. It does not try to match ccstatusline exactly
+// (that computes tokens/cost from transcript metadata fed by Claude Code itself, which hooks
+// cannot see); it only summarises what we can actually get: cwd, git branch / uncommitted
+// changes, active duration, audit event counts.
 const { execFileSync } = require("child_process");
 
 function git(cwd, args) {

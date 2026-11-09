@@ -8,32 +8,32 @@ function dbPath() {
   return path.join(home, "events.db");
 }
 
-// 按 ; & | 换行 把一条 Bash 命令切成"子命令"分别看开头——这是本文件好几个分类器
-// 共用的手法（不对整条命令文本做子串匹配，避免 echo 出来的字符串被误判成真的
-// 执行了什么）。但天真地对整条命令文本做 cmd.split(/[;&|\n]+/) 有个漏洞：引号内的
-// 多行字符串参数、heredoc（<<'EOF' ... EOF）的正文里，换行是内容的一部分，不是
-// shell 语法意义上的命令分隔符——如果不管这些，会被当成一堆"独立子命令"分别去看
-// 开头，实测线上数据抓到两个真实案例：
-//   1. `python3 -c "\nimport json, sys\n..."` —— 双引号参数里的 "import json, sys"
-//      单独成一行，被当成了 ImageMagick 截图命令 import 的调用；
-//   2. `git commit -m "$(cat <<'EOF' ... EOF)"` —— heredoc 正文里 word-wrap 过的一行
-//      刚好以 "spectacle" 开头（描述 KDE 截图工具名字的说明文字），被当成了真的在
-//      调用 spectacle 截图。
-// splitShellSegments() 用一个简化版的 shell 分词器解决这个问题：跟踪当前在不在
-// 单/双引号、在不在 heredoc 正文里，只有真正在"顶层"（不在引号/heredoc 内部）的
-// ; & | 换行才当分隔符。不追求 100% 还原 bash 语法（比如反引号/嵌套 $() 里的换行
-// 没特殊处理），但已经覆盖了实际观测到的两种误判来源。
-// 第二个参数 seps 可选——默认按 ; & | 换行 四种都切开（原来的行为，绝大多数分类器
-// 都要的"只看子命令开头"）；但个别场景（比如判断 `cat file | nc host port` 这种
-// 管道发送）需要保留 `|` 两边的关联，不能把管道也当独立分隔符切开，这时候传
-// `";&\n"` 只切 ; & 换行，把 `|` 连起来的几段留在同一个字符串里，之后再按需要
-// 自己用 `splitShellSegments(group, "|")` 二次切分。
+// Splits a Bash command into "subcommands" at ; & | and newlines and looks at how each one starts. Several
+// classifiers in this file share this technique (rather than substring-matching the whole command text, so a
+// string that is merely echoed is not taken for something actually executed). But naively splitting the whole
+// command with cmd.split(/[;&|\n]+/) has a hole: inside a quoted multi-line string argument or a heredoc body
+// (<<'EOF' ... EOF), newlines are content, not shell command separators. Ignoring that turns the body into a
+// pile of "independent subcommands" whose starts get inspected; real production data caught two cases:
+//   1. `python3 -c "\nimport json, sys\n..."`: the "import json, sys" inside the double-quoted argument sits on
+//      its own line and was taken for a call to ImageMagick's screenshot command import;
+//   2. `git commit -m "$(cat <<'EOF' ... EOF)"`: a word-wrapped line in the heredoc body happened to start with
+//      "spectacle" (text describing the KDE screenshot tool by name) and was taken for a real spectacle
+//      screenshot call.
+// splitShellSegments() fixes this with a simplified shell tokenizer: it tracks whether we are inside single or
+// double quotes or a heredoc body, and treats ; & | and newline as separators only at the "top level" (outside
+// quotes/heredocs). It does not aim to reproduce bash syntax 100% (for example newlines inside backticks or
+// nested $() get no special handling), but it covers both observed sources of false matches.
+// The second argument seps is optional. By default it splits on all four of ; & | and newline (the original
+// behaviour, the "look only at subcommand starts" most classifiers want). Some cases (for example detecting a
+// pipe send like `cat file | nc host port`) need to keep both sides of `|` together, so they pass `";&\n"` to
+// split only on ; & and newline, leaving the `|`-joined parts in one string, then split again themselves with
+// `splitShellSegments(group, "|")` as needed.
 function splitShellSegments(cmd, seps = ";&|\n") {
   const segments = [];
   let cur = "";
   let i = 0;
   let quote = null; // "'" | '"' | null
-  let heredocEnd = null; // 结束定界符，或者 null（不在 heredoc 正文里）
+  let heredocEnd = null; // closing delimiter, or null (not inside a heredoc body)
   const n = cmd.length;
   while (i < n) {
     if (heredocEnd !== null) {
@@ -91,13 +91,13 @@ function splitShellSegments(cmd, seps = ";&|\n") {
   return segments;
 }
 
-// 判断一条 Bash 命令里是不是真的在删文件——按 splitShellSegments() 切成子命令分别
-// 看开头，而不是对整条命令文本做子串匹配。之前用 SQL LIKE '%rm %' 之类的写法会把
-// "confirm "/"warm "/"term " 这些词尾带 "rm " 的普通输出也算成删除，
-// 或者把 echo 出来的字符串（比如 echo "rm -rf 很危险"）也算成真的删除，误报非常多。
+// Whether a Bash command really deletes files: split into subcommands with splitShellSegments() and look at how
+// each starts, rather than substring-matching the whole command text. The old SQL LIKE '%rm %' approach counted
+// ordinary output with words ending in "rm " ("confirm "/"warm "/"term ") as deletions, or counted an echoed
+// string (such as echo "rm -rf is dangerous") as a real deletion: lots of false positives.
 function commandDeletesFiles(cmd) {
   if (!cmd) return false;
-  // find -exec rm ... \; / cmd | xargs rm 这类不在子命令开头，单独兜底判断一下。
+  // find -exec rm ... \; and cmd | xargs rm are not at a subcommand start; check them separately as a fallback.
   if (/(?:^|\s)(?:-exec\s+|xargs\s+(?:-\S+\s+)*)(?:rm|shred|unlink)\b/.test(cmd)) return true;
   const segments = splitShellSegments(cmd);
   for (const raw of segments) {
@@ -118,11 +118,11 @@ function isDeleteEvent(detailJson) {
   }
 }
 
-// GitHub 相关操作分类——跟 commandDeletesFiles 同一个思路：按 ; & | 换行 切成子命令
-// 分别看开头，而不是对整条命令文本做子串匹配（避免把 echo "git push 很危险" 这种
-// 字符串输出也算成真的执行了 git push）。一条 Bash 命令里可能好几个子命令都命中
-// （比如 `git add . && git commit -m x && git push`），按"最具体"优先返回一个分类，
-// 不是每个子命令都单独计数——跟 commandDeletesFiles 返回单个布尔值是同一个道理。
+// Classifies GitHub operations, same approach as commandDeletesFiles: split into subcommands at ; & | and
+// newlines and look at how each starts, rather than substring-matching the whole command text (so output like
+// echo "git push is dangerous" does not count as a real git push). Several subcommands of one Bash command may
+// match (for example `git add . && git commit -m x && git push`); return the single "most specific" category
+// rather than counting each subcommand, for the same reason commandDeletesFiles returns one boolean.
 const GITHUB_OP_ORDER = ["push", "clone", "commit", "pullFetch", "ghCli", "otherGit"];
 function classifyGithubOp(cmd) {
   if (!cmd) return null;
@@ -151,10 +151,10 @@ function githubOpType(detailJson) {
   }
 }
 
-// SSH 相关操作分类——跟 classifyGithubOp 完全一样的思路：按 ; & | 换行拆成子命令，
-// 只看子命令开头（`\s|$` 而不是 `\b`，是为了不把 ssh-keygen/ssh-copy-id/ssh-add/
-// ssh-agent 这些名字里带连字符的独立命令误判成 "ssh" 本身——单纯用 \b 的话
-// "ssh-keygen" 里 "ssh" 后面紧跟的 "-" 也算一次词边界，会被 /^ssh\b/ 误命中）。
+// Classifies SSH operations, exactly like classifyGithubOp: split into subcommands at ; & | and newlines and look
+// only at subcommand starts. (`\s|$` rather than `\b`, so independent hyphenated commands like
+// ssh-keygen/ssh-copy-id/ssh-add/ssh-agent are not taken for "ssh" itself: with a plain \b, the "-" right after
+// "ssh" in "ssh-keygen" also counts as a word boundary, and /^ssh\b/ would match.)
 const SSH_OP_ORDER = ["ssh", "scp", "sftp", "keyManagement", "other"];
 function classifySshOp(cmd) {
   if (!cmd) return null;
@@ -182,12 +182,14 @@ function sshOpType(detailJson) {
   }
 }
 
-// 下载行为分类——跟 classifyGithubOp/classifySshOp 一样按子命令开头识别，注意不要
-// 跟其它已经单独统计过的分类重叠（git clone 算 GitHub 操作、pip/npm/系统包管理器
-// 安装算软件安装统计，这里全部不再重复计数，只看专门的下载类工具）。
-// curl 单独处理：只有带了真正落盘的参数（-o/-O/--output/--remote-name）才算"下载"，
-// 裸 curl（比如 curl https://api.example.com/status）绝大多数是在调 API 看返回内容，
-// 不是在下载文件，全算成下载会把普通的接口调用也算进来，噪音太大。
+// Classifies download activity, by subcommand start like classifyGithubOp/classifySshOp. Take care not to overlap
+// categories already counted elsewhere (git clone counts as a GitHub operation; pip/npm/system package manager
+// installs count toward software install stats); none of those are counted again here, only dedicated download
+// tools.
+// curl is handled separately: it only counts as a "download" with an option that really writes to disk
+// (-o/-O/--output/--remote-name). Bare curl (such as curl https://api.example.com/status) is mostly calling an
+// API to read the response, not downloading a file; counting it all as downloads would pull in ordinary API
+// calls and add too much noise.
 const DOWNLOAD_OP_ORDER = ["wget", "curl", "aria2", "other"];
 const CURL_OUTPUT_FLAG_RE = /(^|\s)(-O\b|--remote-name\b|-o\s|--output(\s|=))/;
 function classifyDownloadOp(cmd) {
@@ -215,35 +217,36 @@ function downloadOpType(detailJson) {
   }
 }
 
-// 文件发送/外传行为分类——跟上面几个分类器不一样的地方在于要判断"方向"：ssh-ops
-// 那张卡片只回答"用没用过 scp/sftp"，这张卡片回答的是"有没有把本地文件真的推到了
-// 外面"，同一条 scp 命令可能在两张卡片里都算数，这是故意的（两张卡回答的问题不同，
-// 不是重复统计）。方向判断只看"最后一个参数长得像不像远程目标"（user@host:path /
-// host:path / scheme://bucket/path / rclone 的 remote:path 这几种写法），不去完整
-// 解析参数列表——`scp host:a host:b local/` 这种目的地其实是本地路径的下载场景，
-// 因为最后一个参数不匹配远程目标的写法，不会被计入，宁可漏判也不要把下载误判成
-// 发送（跟本文件其它分类器一个原则）。
+// Classifies file send / exfiltration. Unlike the classifiers above it has to judge "direction": the ssh-ops card
+// only answers "was scp/sftp used", while this card answers "was a local file actually pushed out". The same scp
+// command can count on both cards, on purpose (the two cards answer different questions; this is not double
+// counting). Direction is judged only from whether "the last argument looks like a remote target"
+// (user@host:path / host:path / scheme://bucket/path / rclone's remote:path), without fully parsing the argument
+// list. A download like `scp host:a host:b local/`, whose destination is really a local path, is not counted
+// because the last argument does not look like a remote target. Better to miss one than to take a download for
+// a send (the same principle as the other classifiers in this file).
 const REMOTE_DEST_TAIL_RE = /(?:^|\s)((?:[\w.-]+@)?[a-zA-Z0-9][\w.-]*:(?:\/\/)?\S+)\s*$/;
-// curl/wget 的"上传"参数——只认明确会把本地文件内容当请求体发出去的写法
-// （-T/--upload-file 整个文件、-F/--form 里带 @file 的分片、--data(-binary) 带 @file、
-// wget --post-file），裸的 -d/--data（没有 @file）大概率是普通 API 调用的请求体，
-// 不当成"发送文件"，避免把所有 POST 请求都算进来。
+// The curl/wget "upload" options: only forms that clearly send a local file's content as the request body
+// (-T/--upload-file for a whole file, -F/--form parts with @file, --data(-binary) with @file, wget --post-file).
+// A bare -d/--data (no @file) is most likely an ordinary API request body and is not treated as "sending a
+// file", so not every POST request gets counted.
 const CURL_UPLOAD_FLAG_RE = /(^|\s)(-T\s|--upload-file(\s|=)|-F\s|--form(\s|=)|--data(-binary)?(\s+|=)@|-d\s+@)/;
 const WGET_UPLOAD_FLAG_RE = /--post-file(\s|=)/;
-// 云存储 CLI 的写入类子命令——cp/sync/copy/upload/put/mv 这几个词，跟上面的
-// REMOTE_DEST_TAIL_RE 搭配用：子命令是写入类 且 目的地（最后一个参数）长得像远程
-// bucket/remote，才算发送；子命令是 ls/cat 之类的只读操作，或者目的地是本地路径
-// （比如 `aws s3 cp s3://bucket/file ./local` 这种下载），都不计入。
+// Write-type subcommands of cloud storage CLIs: cp/sync/copy/upload/put/mv. Used with REMOTE_DEST_TAIL_RE above:
+// it only counts as a send when the subcommand is a write AND the destination (last argument) looks like a remote
+// bucket/remote. Read-only subcommands like ls/cat, or a local destination (such as the download
+// `aws s3 cp s3://bucket/file ./local`), are not counted.
 const CLOUD_WRITE_VERB_RE = /\b(cp|sync|copy|upload|put|mv)\b/;
-// nc/ncat/netcat 的"管道灌进去发送"写法——实测线上数据里 `cat file | nc -w 10 host port`
-// 这种管道形式比下面 `nc host port < file` 的显式重定向写法常见得多，之前只认重定向
-// 写法会把这类真实的"发送文件到远程设备"操作完全漏掉。管道写法没法在按 ; & | 换行 都切开的 segments
-// 里判断——`|` 一旦被当分隔符切开，"nc 这一段前面是不是接了别的命令的输出"这个信息
-// 就丢了，所以这里单独用 splitShellSegments(cmd, ";&\n") 保留 `|` 关联，只在真正
-// 含 `|` 的"管道组"内部再按 `|` 二次切分，看最后一节是不是 nc/ncat/netcat 加
-// "host + port"这种客户端连出去的写法（不是 `-l` 监听模式——监听是等别人连进来，
-// 语义相反，且已经由 policy.py 的反弹 shell 规则单独覆盖，这里不重复计入）。不管
-// 管道前面具体是 cat 还是别的什么在产生数据，"喂给 nc 发送出去"这个动作本身就算数。
+// The "pipe it into nc to send" form for nc/ncat/netcat. In real production data the pipe form
+// `cat file | nc -w 10 host port` is much more common than the explicit redirect `nc host port < file` below;
+// accepting only the redirect form missed these real "send a file to a remote device" operations entirely. The
+// pipe form cannot be judged from segments split on all of ; & | and newline: once `|` is a separator, the
+// information "was this nc segment fed by another command's output" is lost. So here
+// splitShellSegments(cmd, ";&\n") keeps `|` groups together, only real pipe groups are split again on `|`, and
+// we check whether the last stage is nc/ncat/netcat in the client "host + port" form connecting out (not `-l`
+// listen mode: listening waits for others to connect in, the opposite meaning, and policy.py's reverse shell
+// rules already cover it, so it is not counted again here). Whatever produces the data before the pipe, cat or
+// anything else, "feeding nc to send it out" counts in itself.
 const NC_LISTEN_OR_SCAN_FLAG_RE = /(^|\s)-[a-zA-Z]*[lz][a-zA-Z]*(\s|$)/;
 const NC_HOST_PORT_TAIL_RE = /\S+\s+\d{1,5}\s*$/;
 function classifyNetcatPipeSend(cmd) {
@@ -271,8 +274,8 @@ function classifyFileSendOp(cmd) {
     } else if (/^rsync(\s|$)/.test(seg)) {
       if (REMOTE_DEST_TAIL_RE.test(seg)) found.add("rsync");
     } else if (/^sftp(\s|$)/.test(seg)) {
-      // sftp 是交互式协议，真正的上传动作是里面的 `put` 子命令（区别于 `get`），
-      // 只在命令行文本里能直接看到 put 时才算（比如 -b 批处理脚本或者 heredoc 里写的）。
+      // sftp is an interactive protocol; the real upload is its `put` subcommand (as opposed to `get`). Count it only
+      // when put is visible directly in the command-line text (for example in a -b batch script or a heredoc).
       if (/\bput\b/.test(seg)) found.add("sftp");
     } else if (/^curl(\s|$)/.test(seg) && CURL_UPLOAD_FLAG_RE.test(seg)) {
       found.add("curlUpload");
@@ -281,8 +284,8 @@ function classifyFileSendOp(cmd) {
     } else if (/^(aws\s+s3|gsutil|az\s+storage|azcopy|ossutil|rclone|b2)(\s|$)/.test(seg)) {
       if (CLOUD_WRITE_VERB_RE.test(seg) && REMOTE_DEST_TAIL_RE.test(seg)) found.add("cloudSync");
     } else if (/^(nc|ncat|netcat)(\s|$)/.test(seg)) {
-      // 管道写法（`cat file | nc host port`）已经在上面用 classifyNetcatPipeSend()
-      // 单独判断过了，这里只再认 `nc host port < file` 这种显式输入重定向的写法。
+      // The pipe form (`cat file | nc host port`) was already checked above by classifyNetcatPipeSend(); here we only
+      // accept the explicit input redirect form `nc host port < file`.
       if (/<\s*\S/.test(seg)) found.add("netcatSend");
     } else if (/^(wormhole\s+send|croc\s+send|magic-wormhole\s+send)(\s|$)/.test(seg)) {
       found.add("other");
@@ -294,22 +297,22 @@ function classifyFileSendOp(cmd) {
   return null;
 }
 
-// 上面这套全是"Bash 命令文本"路径——Claude 也可能完全不走 shell，直接调用自己的
-// 原生工具/MCP 工具把本地文件送出去，这条路子 Bash 正则天生看不到，得按 tool_name
-// 单独识别（跟 screenshotKind() 对 Bash/Read/MCP 三路分别判断截图是同一个思路）：
-//   1. Artifact 工具的 asset 上传——`asset: true` 时会把 file_path/file_paths 指向
-//      的本地文件原样传到 claude.ai 的 artifact 资源库，这是内置工具里最直接的
-//      "把本地文件发到外部服务"路径。`files`/`root` 发布整页内容技术上也会把本地
-//      文件内容送到 claude.ai，但那是"发布一个页面"这个更常见、几乎每次用 Artifact
-//      工具都会触发的动作，不加区分地全算成"发送文件"会把这张卡片刷屏刷成噪音；
-//      只挑 asset:true 这条界限清楚、语义就是"上传一个文件"的路径。
-// 2. MCP 工具名里带明显的"上传/发送文件"字样——不特地维护一份 MCP server 名单，
-//      按工具名字面意思识别（Slack/GDrive/邮件附件这类 MCP server 暴露出来的写入类
-//      工具，名字基本都带 upload/send_file/attach/put_object 这几个词之一）。
-// 3. 内置/MCP 工具参数里同时出现"远程 URL 目标"和"本地文件路径/附件"字段的兜底——
-//      目前已知的内置工具（WebFetch 等）文档上都不支持把本地文件当请求体发出去，
-//      这条先按"万一哪天冒出这种参数形状"写成防御性检测，宁可漏判也不要把正常的
-//      只读 fetch 调用误记成发送文件。
+// Everything above handles "Bash command text". Claude can also skip the shell entirely and send local files out
+// with its own native tools or MCP tools. Bash regexes cannot see that path, so it is recognised by tool_name
+// (the same idea as screenshotKind() judging Bash/Read/MCP separately for screenshots):
+//   1. The Artifact tool's asset upload: with `asset: true` it uploads the local files file_path/file_paths
+//      point to, as is, to the claude.ai artifact asset store. This is the most direct "send a local file to an
+//      external service" path among the built-in tools. Publishing a whole page with `files`/`root` technically
+//      also sends local file content to claude.ai, but that is "publish a page", a more common action triggered
+//      by almost every use of the Artifact tool; counting all of it as "sending files" would flood this card
+//      with noise. Only the clear-cut asset:true path, whose meaning is "upload a file", is picked.
+// 2. MCP tool names that clearly say "upload/send file". No list of MCP servers is maintained; tools are
+//      recognised by the literal meaning of their names (write-type tools exposed by MCP servers such as Slack,
+//      GDrive or mail attachments almost always contain one of upload/send_file/attach/put_object).
+// 3. Fallback for built-in/MCP tool arguments containing both a "remote URL target" and a "local file path /
+//      attachment" field. No currently known built-in tool (WebFetch etc.) documents support for sending a local
+//      file as the request body; this is a defensive check written "in case such an argument shape ever shows
+//      up". Better to miss one than to record a normal read-only fetch as a file send.
 const MCP_FILE_SEND_NAME_RE = /(upload|send_?file|attach(_?file)?|put_?object|share_?file)/i;
 const URL_FIELD_RE = /^https?:\/\//i;
 function isArtifactAssetUpload(detail) {
@@ -322,11 +325,11 @@ function hasRemoteFileBodyShape(detail) {
   return Boolean(detail.file_path || detail.file_paths || detail.attachment || detail.body_file);
 }
 function classifyNativeFileSendOp(toolName, detail) {
-  // Artifact 工具单独判断到这里为止就返回，不落到下面的通用兜底——它正常的
-  // "更新已发布的 artifact" 用法本来就是 url（要更新的现有 artifact）+ file_path
-  // （本地页面文件）同时出现，跟 hasRemoteFileBodyShape() 想抓的"远程目标 + 本地
-  // 文件"参数形状长得一模一样，实测线上数据已经证实了这个撞车（一堆正常的页面
-  // 发布/更新调用被通用兜底误判成了"发送文件"），必须先在这里挡住。
+  // The Artifact tool returns here and never reaches the generic fallback below. Its normal "update a published
+  // artifact" use has url (the existing artifact to update) + file_path (the local page file) together, exactly
+  // the "remote target + local file" argument shape hasRemoteFileBodyShape() looks for. Real production data
+  // confirmed the collision (lots of normal page publish/update calls were misjudged as "sending files" by the
+  // generic fallback), so it must be stopped here first.
   if (toolName === "Artifact") return isArtifactAssetUpload(detail) ? "artifactUpload" : null;
   if (toolName && toolName.startsWith("mcp__") && MCP_FILE_SEND_NAME_RE.test(toolName)) return "mcpFileSend";
   if (toolName && toolName !== "Bash" && hasRemoteFileBodyShape(detail)) return "toolFileBody";
@@ -343,12 +346,12 @@ function fileSendOpType(toolName, detailJson) {
   }
 }
 
-// Docker 操作分类——跟 classifySshOp/classifyDownloadOp 一样按子命令开头识别。
-// build/run 单独拆出来是因为这两个是"会执行任意外部镜像/Dockerfile 里的指令"，
-// 风险跟普通的 ps/logs/images 这类只读查看类操作不是一个量级；exec 单独拆出来是
-// 因为这是"进到一个已经在跑的容器里执行命令"，跟宿主机上直接跑命令的风险类似；
-// compose 覆盖 docker compose（v2 子命令）和独立的 docker-compose（v1 二进制）。
-// docker-compose 单独判断是不是子命令开头，不能套用 \b（否则会被 docker 一起命中）。
+// Classifies Docker operations, by subcommand start like classifySshOp/classifyDownloadOp. build/run are split out
+// because they "execute instructions from arbitrary external images/Dockerfiles", a different order of risk from
+// read-only views like ps/logs/images; exec is split out because it "runs a command inside an already running
+// container", with risk similar to running commands directly on the host. compose covers docker compose (the v2
+// subcommand) and standalone docker-compose (the v1 binary). docker-compose is checked separately as a
+// subcommand start; \b cannot be used (or docker would match too).
 const DOCKER_OP_ORDER = ["run", "build", "exec", "compose", "other"];
 function classifyDockerOp(cmd) {
   if (!cmd) return null;
@@ -377,7 +380,7 @@ function dockerOpType(detailJson) {
   }
 }
 
-// 压缩/归档操作分类——跟 classifyDockerOp 同一套思路，按子命令开头识别。
+// Classifies compression/archive operations, by subcommand start like classifyDockerOp.
 const ARCHIVE_OP_ORDER = ["tar", "zip", "sevenZip", "gzip", "other"];
 function classifyArchiveOp(cmd) {
   if (!cmd) return null;
@@ -405,10 +408,10 @@ function archiveOpType(detailJson) {
   }
 }
 
-// 网络诊断工具分类——nc/ncat/netcat 单独统计，不代表就是反弹 shell：`nc -e /bin/sh`
-// 这种真正危险的用法已经由 policy.py 的 reverse_shell_pattern 规则单独拦截/告警了，
-// 这里只是"这条命令用过 nc/nmap/telnet 之类的工具"这个更宽的可见性统计，跟风险判断
-// 是两回事。
+// Classifies network diagnostic tools. nc/ncat/netcat are counted on their own, which does not mean a reverse
+// shell: the truly dangerous use like `nc -e /bin/sh` is already blocked/warned by policy.py's
+// reverse_shell_pattern rule. This is only the broader visibility count "this command used a tool like
+// nc/nmap/telnet", a separate matter from risk judgement.
 const NETDIAG_OP_ORDER = ["nc", "nmap", "telnet", "other"];
 function classifyNetdiagOp(cmd) {
   if (!cmd) return null;
@@ -435,20 +438,21 @@ function netdiagOpType(detailJson) {
   }
 }
 
-// 逆向分析工具调用——跟网络诊断工具同一个思路：纯可见性统计，不代表风险判断。
-// IDA/Ghidra/radare2/GDB 这些是专业逆向工程师的日常工具，CTF/漏洞研究/合规安全
-// 测试里到处都是，没有理由拦截或要求确认；但"Claude 有没有用过这些工具分析过
-// 什么二进制"本身是个值得沉淀的可见性信号，尤其结合会话的 cwd/命令明细能帮着
-// 复盘一次逆向分析任务到底摸了哪些文件。按工具家族分类，不细到具体子命令参数。
+// Reverse-engineering tool calls, same idea as the network diagnostic tools: a pure visibility count, not a risk
+// judgement. IDA/Ghidra/radare2/GDB are everyday tools for professional reverse engineers, everywhere in CTFs,
+// vulnerability research and compliance security testing, so there is no reason to block them or ask for
+// confirmation. But "has Claude used these tools to analyse some binary" is a visibility signal worth keeping;
+// together with the session's cwd and command details it helps review which files a reverse-engineering task
+// touched. Classified by tool family, not down to specific subcommand arguments.
 const REVERSE_ENG_OP_ORDER = ["ida", "ghidra", "radare2", "gdb", "other"];
-// 真实数据里 IDA/GDB 这些经常是绝对路径调用的（比如 /opt/idapro-9.0/idat64），装了
-// 之后极少会特地加进 PATH——只按 "^ida..." 从头匹配会把这类调用全部漏掉。跟
-// policy.py 的 _normalize_head 一个思路：先剥掉子命令开头可能有的环境变量赋值前缀
-// （LD_LIBRARY_PATH=xxx PYTHONHOME=xxx gdb ...这种，实测线上真的有——手动给 gdb 挂
-// 定制运行时库路径来跑跨架构调试），再剥可执行文件的路径前缀，最后拿裸文件名匹配。
-// 顺序不能反：如果先剥路径前缀，会把 "LD_LIBRARY_PATH=/a/b/c" 这个环境变量赋值本身
-// 误当成"路径/文件名"来剥（截出来的"文件名"是这个赋值的最后一段，不是真正在跑的
-// 命令），必须先把环境变量赋值这一层完全去掉。
+// In real data IDA/GDB are often called by absolute path (such as /opt/idapro-9.0/idat64); once installed they
+// are rarely added to PATH, so matching only "^ida..." from the start would miss all those calls. Same idea as
+// policy.py's _normalize_head: first strip any environment variable assignment prefix at the start of the
+// subcommand (LD_LIBRARY_PATH=xxx PYTHONHOME=xxx gdb ...; this really occurs in production, attaching a custom
+// runtime library path to gdb for cross-architecture debugging), then strip the executable's path prefix, and
+// finally match the bare file name. The order matters: stripping the path prefix first would treat the
+// assignment "LD_LIBRARY_PATH=/a/b/c" itself as a "path/file name" (the extracted "file name" would be the last
+// part of the assignment, not the command actually running), so the environment variable layer must go first.
 const ENV_ASSIGN_RE = /^(?:[A-Za-z_]\w*=(?:'[^']*'|"[^"]*"|\S*)\s+)+/;
 function stripEnvAssignments(seg) {
   return seg.replace(ENV_ASSIGN_RE, "");
@@ -457,9 +461,9 @@ function stripPathPrefix(seg) {
   const m = seg.match(/^(\S*\/)(\S+)/);
   return m ? seg.slice(m[1].length) : seg;
 }
-// macOS 上 IDA/Ghidra/Hopper/Binary Ninja 这类 GUI 逆向工具常打包成 .app，用
-// `open -a "IDA Pro"` 这种方式启动，不是直接跑一个裸的可执行文件名——单独识别这个
-// 调用形态，跟上面按可执行文件名匹配的逻辑并列判断。
+// On macOS, GUI reverse-engineering tools like IDA/Ghidra/Hopper/Binary Ninja are often packaged as .app and
+// launched with `open -a "IDA Pro"` rather than a bare executable name. This call form is recognised separately,
+// alongside the executable-name matching above.
 const MACOS_OPEN_APP_RE = /^open\s+(-\S+\s+)*-a\s+["']?([^"'\n]+?)["']?(\s|$)/;
 function classifyReverseEngOp(cmd) {
   if (!cmd) return null;
@@ -503,16 +507,16 @@ function reverseEngOpType(detailJson) {
   }
 }
 
-// 进程管理/后台驻留分类——nohup/disown/setsid 按子命令开头识别，是同一套思路；
-// "后台任务"（裸 `&`）不一样，它不是某个命令的名字，而是整条命令末尾的一个 shell
-// 语法标记，没法按 splitShellSegments() 切出来的子命令开头去匹配（splitShellSegments
-// 本身就会把单个 `&` 当成分隔符切开，切完就看不出原来是不是背景任务标记了）。改成
-// 直接在原始命令文本上找"独立的 `&`"：前面不能紧跟 `&`/`>`（排除 `&&`、`2>&1`、`&>`
-// 这些不是真正后台标记的写法），后面不能紧跟数字/`&`/`>`（同样排除 `2>&1`/`&>` 这种
-// 文件描述符重定向），并且这个 `&` 后面（跳过空白）直接是命令末尾或者 `;`——只抓
-// "命令在这里结束、后台丢出去了"这种最典型的写法，像 `task1 & task2`（后台之后紧接着
-// 写下一条命令，中间没有 `;`）这种少见写法会漏掉，属于故意收窄换取不误伤形如
-// `curl 'http://x.com/a&b=c'` 这类 URL 查询字符串里的 `&`。
+// Classifies process management / staying resident. nohup/disown/setsid are recognised by subcommand start, the
+// same approach. A "background job" (bare `&`) is different: it is not a command name but a shell syntax marker
+// at the end of the whole command, so it cannot be matched at the subcommand starts from splitShellSegments()
+// (which itself splits on a single `&`, after which you can no longer tell whether it was a background marker).
+// Instead, search the raw command text for a "standalone `&`": not preceded by `&`/`>` (ruling out `&&`, `2>&1`,
+// `&>`, which are not real background markers), not followed by a digit/`&`/`>` (likewise ruling out the
+// `2>&1`/`&>` file descriptor redirects), and followed (after whitespace) directly by the end of the command or
+// `;`. This catches only the most typical "the command ends here, sent to the background" form. A rarer form
+// like `task1 & task2` (backgrounding followed directly by the next command with no `;`) is missed, a deliberate
+// narrowing so that an `&` in a URL query string like `curl 'http://x.com/a&b=c'` is not hit.
 const BG_JOB_RE = /[^&>]&(?![&>0-9])\s*(;|$)/m;
 const PROCMGMT_OP_ORDER = ["nohup", "disown", "backgroundJob", "other"];
 function classifyProcessBackground(cmd) {
@@ -540,16 +544,17 @@ function processBackgroundType(detailJson) {
   }
 }
 
-// 从命令文本里抠目标主机名——三种写法都要认，全部要求有明确、低误判风险的语法标记，
-// 不认"看起来像域名的裸单词"：
-//   1. URL 形式：协议://[user@]host[:port]/…（wget/curl/aria2/axel/lftp/http(s)）
-//   2. user@host（ssh/sftp 的典型写法，@ 前缀是强信号，不会跟本地文件名搞混）
-//   3. host:path（scp/rsync 的远程规格，不带 user@ 也行，但一定要紧跟冒号）
-// 特意不认"裸主机名、没有 @ 也没有冒号"这种写法（比如 `ssh myserver`、或者
-// `scp file.txt user@host:/path` 里的本地源文件 file.txt）——第一版曾经用一个更宽的
-// 正则把 `-o out.tar.gz` 的输出文件名、scp 的本地源文件名都当成了"主机名"，因为
-// 这些文件名本身也是带点的字符串、后面跟着空白，形状上跟目标主机没法用纯正则区分。
-// 宁可漏掉内网短名这种真正的边缘情况，也不要把命令里随便一个带点的单词当成主机名。
+// Extracts target host names from the command text. Three forms are accepted, all requiring a clear syntax marker
+// with low false-match risk; a "bare word that looks like a domain" is not accepted:
+//   1. URL form: scheme://[user@]host[:port]/… (wget/curl/aria2/axel/lftp/http(s))
+//   2. user@host (typical for ssh/sftp; the @ is a strong signal and will not be confused with a local file name)
+//   3. host:path (scp/rsync remote spec; user@ is optional, but the colon must follow directly)
+// Deliberately not accepted: a "bare host name with neither @ nor colon" (such as `ssh myserver`, or the local
+// source file file.txt in `scp file.txt user@host:/path`). The first version used a broader regex that took the
+// output file name in `-o out.tar.gz` and scp's local source file name for "host names", because those file
+// names are also dotted strings followed by whitespace, and pure regex cannot tell them apart from a target host
+// by shape. Better to miss an internal short name, a real edge case, than to take any dotted word in a command
+// for a host name.
 const URL_HOST_RE = /\b[a-zA-Z][a-zA-Z0-9+.-]*:\/\/(?:[^\s@/]+@)?([^\s/:?#'"]+)/g;
 const AT_HOST_RE = /@((?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}|(?:\d{1,3}\.){3}\d{1,3})/g;
 const COLON_HOST_RE = /(?:^|[\s])((?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}|(?:\d{1,3}\.){3}\d{1,3}):(?=[\w~./]|$)/g;
@@ -567,12 +572,12 @@ function extractCommandHosts(text) {
   return Array.from(hosts);
 }
 
-// 哪些子命令算"发起了网络请求"——比下载行为统计（DOWNLOAD_OP_ORDER）宽一些：那边
-// 特意把不带 -o/-O 的裸 curl 排除在外（避免把纯 API 调用算成"下载"），但对 AI 轨迹
-// 来说，裸 curl 调 API 本身也是一次真实的网络请求，理应体现在轨迹里，不该套用下载
-// 统计那条更窄的口径。git 只算 clone/pull/fetch/push 这几个会真的发起网络连接的
-// 子命令，commit 是纯本地操作不算。ssh 系列里 keyManagement（ssh-keygen 等）是本地
-// 操作，同样不算。
+// Which subcommands count as "made a network request". Broader than the download stats (DOWNLOAD_OP_ORDER): that
+// one deliberately excludes bare curl without -o/-O (so pure API calls are not counted as "downloads"), but for
+// the AI trail a bare curl API call is itself a real network request and belongs in the trail; the narrower
+// download definition does not apply. For git only clone/pull/fetch/push, which really open network
+// connections, count; commit is purely local and does not. In the ssh family, keyManagement (ssh-keygen etc.) is
+// local and likewise does not count.
 function isNetworkTouchingSegment(seg) {
   return (
     /^(wget2?|curl|aria2c?|axel|lftp|ftp|https?)(\s|$)/.test(seg) ||
@@ -581,17 +586,18 @@ function isNetworkTouchingSegment(seg) {
   );
 }
 
-// 由 Claude 通过 Bash 执行、涉及网络请求的命令——跟系统层探针（os_net，实测到的
-// 真实 connect()）是两种不同性质的证据：这里只是"命令文本上看起来会联网"，不代表
-// 真的连通了（可能失败/超时/被 policy 拦截），也没有字节数可言。用户明确要求：这类
-// 命令没被探针捕捉到时，也要能在"AI 轨迹"里体现出来（很多人根本没有手动启动过
-// system 层探针，之前完全没有这块可见性）。只看 Claude 自己触发的 hook_pre 事件，
-// 用户在别的终端里手打的命令不会经过 Claude Code 的 hooks，天然不会出现在这里。
-// WebFetch 请求的目标域名——跟 Bash 命令推断同一个道理，都是"看起来会联网"而
-// 不是探针实测的真实连接，合到同一份 AI 轨迹数据里。WebFetch 的 url 字段本来
-// 就是完整 URL，不用再套 extractCommandHosts() 那套给 shell 命令文本设计的、
-// 专门避免把本地文件名误判成主机名的正则——直接用 URL() 解析主机名更准确。
-// WebSearch 的 query 字段是搜索关键词，不是 URL，没有域名可提取，天然不在这里面。
+// Commands Claude ran through Bash that involve network requests. This is a different kind of evidence from the
+// system-layer probe (os_net, a real connect() observed): here the command text only "looks like it goes
+// online", which does not mean it connected (it may fail, time out or be blocked by policy), and there is no
+// byte count. The user explicitly asked that such commands appear in the "AI trail" even when the probe did not
+// capture them (many people have never started the system-layer probe by hand, and before this there was no
+// visibility at all). Only hook_pre events Claude itself triggered are considered; commands a user types in
+// another terminal never pass through Claude Code's hooks, so they never appear here.
+// Target domains of WebFetch requests: like the Bash command inference, these "look like they go online" rather
+// than being real connections measured by the probe, and are merged into the same AI trail data. WebFetch's url
+// field is already a full URL, so there is no need for extractCommandHosts(), the regex designed for shell
+// command text to avoid taking local file names for host names; parsing the host with URL() is more accurate.
+// WebSearch's query field holds search keywords, not a URL, has no domain to extract, and so is naturally absent.
 function webFetchHostRows(db, limit) {
   const rows = db
     .prepare(
@@ -653,48 +659,49 @@ function commandNetworkHosts(limit = 2000) {
   }, []);
 }
 
-// 截屏审计——Claude Code 没有内置"截图"工具，实际观测到的截屏行为分三种路子，
-// 判断方式各自独立、按"最可能"的信号来源分开看：
-//   1. Bash 命令调用了截图类 CLI 工具——跟 commandDeletesFiles() 一个思路，按
-//      splitShellSegments() 拆成子命令分别看开头，不对整条命令文本做子串匹配
-//      （避免 "echo 截图完成" 这种输出内容被误判）。原来列表里还有 ImageMagick 的
-//      import 命令，线上实测发现这是个坏主意——"import" 是 Python 极常用的关键字，
-//      即使用了 splitShellSegments() 正确跳过引号/heredoc 内部的换行，只要用户
-//      自己的 shell 脚本里有一行真的以裸 "import ..." 开头（比如反引号/未加引号的
-//      command substitution 里），还是会被误判成在调用截图工具。ImageMagick 的
-//      import 命令本身在现代 Linux 桌面上也已经边缘化（grim/flameshot/spectacle/
-//      gnome-screenshot 这些更常见），删掉它换来的误判下降比丢的召回率划算得多。
-//      Wayland 下常见的走法是通过 xdg-desktop-portal 发 D-Bus 请求（gdbus/dbus-send
-//      调 org.freedesktop.portal.Screenshot 接口），命令行工具反而用不了，单独判断。
-//   2. Read 工具打开的文件本身就是图片——不严格等于"截屏"（也可能是用户自己的照片/
-//      设计稿），但从"Claude 看到了屏幕/图像内容"这个角度审计，用户明确要求把这种
-//      情况也算进来，接受比纯粹截图判断更宽的召回率。
-//   3. MCP/"computer use" 类工具的截图动作——工具名里带 "screenshot" 字样（常见于
-//      Playwright/Puppeteer 这类浏览器自动化 MCP server 暴露出来的工具名，比如
-//      mcp__playwright__browser_take_screenshot），或者 Anthropic Computer Use 的
-//      "computer" 工具、action 字段等于 "screenshot"。
-// 截图方式尽量覆盖全：桌面截图工具（X11 / Wayland / macOS / Windows）、屏幕录制、
-// framebuffer 直读、脚本里调抓屏库、无头浏览器/网页截图工具、虚拟机与远程设备抓屏。
-// 分成三类落地：cliTool（宿主机屏幕）、headless（网页）、vm（虚拟机/远程设备）。
+// Screenshot audit. Claude Code has no built-in "screenshot" tool; observed screenshot activity follows three
+// paths, each judged independently by its most likely signal source:
+//   1. A Bash command calls a screenshot CLI tool. Same idea as commandDeletesFiles(): split into subcommands
+//      with splitShellSegments() and look at each start, no substring matching on the whole command text (so
+//      output like "echo screenshot done" is not misjudged). The list used to include ImageMagick's import
+//      command, which production data showed was a bad idea: "import" is an extremely common Python keyword.
+//      Even with splitShellSegments() correctly skipping newlines inside quotes/heredocs, any line of a user's
+//      own shell script that really starts with a bare "import ..." (for example inside backticks or an unquoted
+//      command substitution) would still be taken for a screenshot tool call. ImageMagick's import is also
+//      marginal on modern Linux desktops (grim/flameshot/spectacle/gnome-screenshot are more common); dropping
+//      it cut false positives by far more than the recall it lost.
+//      Under Wayland the usual route is a D-Bus request through xdg-desktop-portal (gdbus/dbus-send calling the
+//      org.freedesktop.portal.Screenshot interface), where command-line tools do not work; judged separately.
+//   2. The file the Read tool opens is itself an image. Not strictly "a screenshot" (it may be the user's own
+//      photo or design), but from the angle of "Claude saw screen/image content" the user explicitly asked for
+//      this case to count too, accepting broader recall than pure screenshot detection.
+//   3. Screenshot actions of MCP / "computer use" tools: the tool name contains "screenshot" (common in tool
+//      names exposed by browser automation MCP servers like Playwright/Puppeteer, such as
+//      mcp__playwright__browser_take_screenshot), or Anthropic Computer Use's "computer" tool with the action
+//      field equal to "screenshot".
+// Screenshot methods are covered as broadly as possible: desktop screenshot tools (X11 / Wayland / macOS /
+// Windows), screen recording, direct framebuffer reads, screen-capture libraries called from scripts, headless
+// browser / web page screenshot tools, and virtual machine / remote device screen capture.
+// They fall into three classes: cliTool (host screen), headless (web pages), vm (virtual machine / remote device).
 
-// —— 宿主机桌面截图工具 / 屏幕录制 / framebuffer ——
+// —— Host desktop screenshot tools / screen recording / framebuffer ——
 const SCREENSHOT_CLI_RE =
   /^(scrot|maim|xwd|shutter|escrotum|ksnip|gscreenshot|deepin-screenshot|xfce4-screenshooter|gnome-screenshot|spectacle|flameshot|screencapture|snippingtool|nircmd|nircmdc|grim|grimshot|wayshot|swappy|hyprshot|slurp|fbgrab|fbcat|recordmydesktop|simplescreenrecorder|vokoscreen|kazam|wf-recorder|wl-screenrec|peek)\b/i;
-// ImageMagick 的 import / magick import 跟 Python 的 `import x` 撞名，必须带截图参数
-// 或图片文件名才算（实测有 `python3 -c "import socket, os"` 被误判成截图）。
+// ImageMagick's import / magick import clash with Python's `import x`, so they only count with screenshot options
+// or an image file name (in production `python3 -c "import socket, os"` was misjudged as a screenshot).
 const SCREENSHOT_IMPORT_RE =
   /^(magick\s+import|import)\b[^\n]*?(\s-(window|screen|root|crop)\b|\.(png|jpe?g|gif|bmp|tiff?|webp|xwd|ppm)(\s|$))/i;
-// 桌面门户（Wayland 下截图常走 DBus 而不是命令行工具）
+// Desktop portal (under Wayland, screenshots often go through DBus rather than a command-line tool)
 const SCREENSHOT_PORTAL_RE = /^(gdbus|dbus-send|qdbus|busctl)\b/i;
-// 屏幕录制同样是"把屏幕内容取走"，只是取的是连续帧
+// Screen recording also "takes the screen content", just as continuous frames
 const SCREENSHOT_FFMPEG_RE = /^(ffmpeg|gst-launch-1\.0)\b/i;
 const SCREENSHOT_FFMPEG_SCREEN_RE =
   /-f\s+(x11grab|gdigrab|avfoundation|kmsgrab)\b|ximagesrc|dxgiscreencapsrc|avfvideosrc\s+capture-screen/i;
-// 脚本里直接调抓屏库（Python/Node/PowerShell），头部是解释器，得按 API 名认
+// Screen-capture libraries called directly from scripts (Python/Node/PowerShell): the head is the interpreter, so match by API name
 const SCREENSHOT_HOST_API_RE =
   /\bImageGrab\.grab\s*\(|\bpyautogui\.screenshot\s*\(|\bpyscreenshot\.grab\s*\(|\bmss\.mss\s*\(|\bsct\.(shot|grab)\s*\(|\brobotjs\.screen\.capture\s*\(|\bscreenshot-desktop\b|\bCopyFromScreen\s*\(/i;
 
-// —— 无头浏览器 / 网页截图 ——
+// —— Headless browsers / web page screenshots ——
 const SCREENSHOT_WEB_TOOL_RE =
   /^(shot-scraper|wkhtmltoimage|cutycapt|gowitness|aquatone|eyewitness|webscreenshot|pageres|capture-website)\b/i;
 const SCREENSHOT_RUNTIME_RE =
@@ -702,21 +709,22 @@ const SCREENSHOT_RUNTIME_RE =
 const SCREENSHOT_API_RE =
   /--screenshots?\b|--screenshot=|\bcaptureScreenshot\b|\bpage\.screenshot\s*\(|\bbrowser_take_screenshot\b|\bsave_screenshot\s*\(|\bget_screenshot_as_\w+\s*\(|\btake_screenshot\s*\(/i;
 
-// —— 虚拟机 / 远程设备抓屏 ——
-// QEMU 的 screendump（HMP 或走 QMP socket 发 {"execute":"screendump"}）、libvirt、
-// VirtualBox、VMware、VNC、安卓 adb screencap、iOS。抓的是 guest/设备的屏幕，跟宿主机
-// 桌面截图是两回事，但同样把屏幕内容取走了。实测审计库里有 170+ 条，之前一条都没识别。
+// —— Virtual machine / remote device screen capture ——
+// QEMU's screendump (HMP, or {"execute":"screendump"} over a QMP socket), libvirt, VirtualBox, VMware, VNC,
+// Android adb screencap, iOS. These capture the guest's/device's screen, which is not the same as a host desktop
+// screenshot, but screen content is still taken. The audit database really had 170+ of these, and none were
+// recognised before.
 const SCREENSHOT_VM_RE =
   /\bscreendump\b|\bvirsh\s+screenshot\b|\bVBoxManage\b[^\n]*\bscreenshotpng\b|\bvmrun\b[^\n]*\bcaptureScreen\b|\bvncsnapshot\b|\bvncdo(tool)?\b[^\n]*\bcapture\b|\badb\b[^\n]*\bscreencap\b|\bidevicescreenshot\b|\bsimctl\b[^\n]*\bscreenshot\b/i;
-// 纯检索/文件管理类命令只是"提到"了这些关键字（grep 找它、rm 删产物），不是真截图
+// Pure search / file management commands only "mention" these keywords (grep searching for them, rm deleting outputs); not real screenshots
 const SCREENSHOT_TEXT_TOOL_RE =
   /^(grep|rg|ag|ack|sed|awk|ls|find|rm|mv|cp|git|diff|wc|sort|uniq|less|more|nano|vim|vi|code|echo|printf|cat|head|tail)\b/i;
 
 const SCREENSHOT_IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|bmp)$/i;
 
-// 子命令开头的包装剥离：环境变量赋值（DISPLAY=:1 …）、sudo/env/timeout/nohup 之类的
-// 包装命令、以及可执行文件的路径前缀（/usr/bin/scrot -> scrot）。原来只剥了 sudo，
-// 于是 `DISPLAY=:1 import -window …`、`timeout 60 google-chrome …` 这类全匹配不上。
+// Wrapper stripping at the start of a subcommand: environment variable assignments (DISPLAY=:1 …), wrapper
+// commands such as sudo/env/timeout/nohup, and the executable's path prefix (/usr/bin/scrot -> scrot). It used to
+// strip only sudo, so `DISPLAY=:1 import -window …` and `timeout 60 google-chrome …` all failed to match.
 const SEG_ENV_ASSIGN_RE = /^(?:[A-Za-z_]\w*=(?:'[^']*'|"[^"]*"|\S*)\s+)+/;
 const SEG_WRAPPER_RE = /^(?:sudo(?:\s+-\S+)*|doas|env(?:\s+-\S+)*|nohup|nice(?:\s+-n\s*\S+)?|time|command|exec|xargs(?:\s+-\S+)*|timeout(?:\s+-\S+)*\s+\S+)\s+/;
 function normalizeSegHead(raw) {
@@ -729,31 +737,31 @@ function normalizeSegHead(raw) {
   return seg.replace(/^(\S*\/)(\S+)/, "$2");
 }
 
-// 返回这条 Bash 命令属于哪种截图方式："cliTool"（截图工具/屏幕录制）、
-// "headless"（浏览器或自动化脚本截图），都不是就返回 null。
+// Returns which screenshot method this Bash command belongs to: "cliTool" (screenshot tool / screen recording) or
+// "headless" (browser or automation-script screenshot); null if neither.
 function screenshotCommandKind(cmd) {
   if (!cmd) return null;
   for (const raw of splitShellSegments(cmd)) {
     const seg = normalizeSegHead(raw);
     if (!seg) continue;
-    // 宿主机屏幕
+    // Host screen
     if (SCREENSHOT_CLI_RE.test(seg)) return "cliTool";
     if (SCREENSHOT_IMPORT_RE.test(seg)) return "cliTool";
     if (SCREENSHOT_PORTAL_RE.test(seg) && /screenshot/i.test(seg)) return "cliTool";
     if (SCREENSHOT_FFMPEG_RE.test(seg) && SCREENSHOT_FFMPEG_SCREEN_RE.test(seg)) return "cliTool";
     if (SCREENSHOT_HOST_API_RE.test(seg)) return "cliTool";
-    // 网页
+    // Web pages
     if (SCREENSHOT_WEB_TOOL_RE.test(seg)) return "headless";
     if (SCREENSHOT_RUNTIME_RE.test(seg) && SCREENSHOT_API_RE.test(seg)) return "headless";
-    // 虚拟机 / 远程设备
+    // Virtual machine / remote device
     if (!SCREENSHOT_TEXT_TOOL_RE.test(seg) && SCREENSHOT_VM_RE.test(seg)) return "vm";
   }
   return null;
 }
 
-// 事件属于"截屏 / 查看图像内容"里的哪一类；不属于就返回 null。
-// cliTool / headless = 真的截了屏；imageRead = 只是读取了一个图片文件；mcp = MCP 或
-// computer-use 工具的截图动作。
+// Which category of "screenshot / viewing image content" the event belongs to; null if none.
+// cliTool / headless = really took a screenshot; imageRead = only read an image file; mcp = a screenshot action of
+// an MCP or computer-use tool.
 function screenshotKind(toolName, detailJson) {
   try {
     const detail = detailJson ? JSON.parse(detailJson) : {};
@@ -774,18 +782,18 @@ function isScreenCaptureEvent(toolName, detailJson) {
   return screenshotKind(toolName, detailJson) ? 1 : 0;
 }
 
-// 敏感操作统计——不像 SSH/下载/Docker 这些分类器那样从头识别命令文本，而是直接
-// 复用 policy.py 已经算好的 matched_rule：sensitive_file_read（Read 工具）、
-// sensitive_file_read_bash（cat/less/head 等 Bash 命令）、env_dump（env/printenv/
-// export -p）、history_read（Bash 里以任何方式碰历史文件、裸 history/fc -l）、
-// history_file_read（Read/Grep 工具直接读历史文件）这五条规则本来就是"读取
-// 敏感信息"这个语义下的全部现有覆盖，没必要在 JS 这边另起一套重复的正则——两边
-// 一旦哪天改了其中一处正则容易不同步。sensitive_file_read/sensitive_file_read_bash
-// 命中时进一步按路径细分是不是 SSH 密钥（.ssh/、id_rsa、id_ed25519、known_hosts），
-// 不是的话（.env/.aws/credentials/.pem/.p12）归到"凭据/Token"；env_dump 单独是
-// "环境变量查找"；history_read/history_file_read 归到"其它敏感操作"。
-// 这组 id 同时出现在下面 sensitiveOpsBreakdown/sensitiveOpsEvents 的 SQL 里
-// （SENSITIVE_READ_RULES_SQL），加规则时两处一起改。
+// Sensitive operation stats. Unlike the SSH/download/Docker classifiers it does not recognise command text from
+// scratch; it reuses the matched_rule policy.py has already computed. These five rules are all the existing
+// coverage for "reading sensitive information": sensitive_file_read (Read tool), sensitive_file_read_bash (Bash
+// commands like cat/less/head), env_dump (env/printenv/export -p), history_read (touching history files in any
+// way in Bash, bare history/fc -l) and history_file_read (Read/Grep tools reading history files directly). There
+// is no need for a duplicate set of regexes on the JS side; if one side's regex changed some day, the two would
+// easily drift apart. When sensitive_file_read/sensitive_file_read_bash match, the path is further split by
+// whether it is an SSH key (.ssh/, id_rsa, id_ed25519, known_hosts); if not (.env/.aws/credentials/.pem/.p12) it
+// goes under "credentials/token"; env_dump on its own is "environment variable lookup"; history_read/
+// history_file_read go under "other sensitive operations".
+// The same ids appear in the SQL of sensitiveOpsBreakdown/sensitiveOpsEvents below (SENSITIVE_READ_RULES_SQL);
+// change both places when adding a rule.
 const SENSITIVE_OP_ORDER = ["sshKey", "credential", "envVar", "other"];
 const SENSITIVE_SSH_KEY_RE = /\.ssh\/|id_rsa|id_ed25519|known_hosts/i;
 const SENSITIVE_READ_RULES = new Set(["sensitive_file_read", "sensitive_file_read_bash", "env_dump", "history_read", "history_file_read"]);
@@ -803,8 +811,8 @@ function sensitiveOpType(toolName, matchedRule, detailJson) {
   if (!SENSITIVE_READ_RULES.has(matchedRule)) return null;
   try {
     const detail = detailJson ? JSON.parse(detailJson) : {};
-    // Bash 看 command；Read 看 file_path；Grep 之类的用 path（跟 policy.py 的
-    // FIELD_CANDIDATES 保持一致）。
+    // Bash: look at command; Read: file_path; Grep and similar: path (consistent with policy.py's
+    // FIELD_CANDIDATES).
     const text = toolName === "Bash" ? detail.command || "" : detail.file_path || detail.path || "";
     return classifySensitiveOp(matchedRule, text);
   } catch (e) {
@@ -812,15 +820,16 @@ function sensitiveOpType(toolName, matchedRule, detailJson) {
   }
 }
 
-// 敏感数据统计——跟上面的"敏感操作统计"同一个思路（复用 policy.py 已经算好的
-// matched_rule，不在 JS 这边另起一套重复的正则），但覆盖的是另一半场景：上面那组
-// 是"读取"敏感信息（读 SSH 密钥、dump 环境变量、翻历史指令），这一组是"敏感信息
-// 本身长什么样"——写入内容里出现云厂商/代码托管平台的凭据格式、PII（身份证号/
-// 手机号/邮箱）、VPN/云 CLI 配置文件的读写。
-// secret_pattern_in_write 和 pii_pattern_in_write 两条规则匹配的是 content 字段
-// （Write 用 content、Edit 用 new_string、NotebookEdit 用 new_source，取哪个看
-// 具体是哪个工具触发的），cloud_vpn_config_write/read 两条匹配的是 file_path，
-// 取字段前先看是哪条规则命中的，不能像 SSH 密钥那组一样固定用同一个字段。
+// Sensitive data stats. Same idea as the "sensitive operation stats" above (reuse the matched_rule policy.py has
+// computed, no duplicate regexes in JS), but covering the other half: the group above is about "reading"
+// sensitive information (reading SSH keys, dumping environment variables, browsing command history); this group
+// is about "what the sensitive information itself looks like": credential formats of cloud providers / code
+// hosting platforms appearing in written content, PII (ID numbers / phone numbers / email addresses), and
+// reading/writing VPN/cloud CLI config files.
+// The secret_pattern_in_write and pii_pattern_in_write rules match the content field (Write uses content, Edit
+// uses new_string, NotebookEdit uses new_source, depending on which tool triggered it); the two
+// cloud_vpn_config_write/read rules match file_path. Check which rule matched before choosing the field; unlike
+// the SSH key group, a single fixed field cannot be used.
 const SENSITIVE_DATA_RULES = new Set(["secret_pattern_in_write", "pii_pattern_in_write", "cloud_vpn_config_write", "cloud_vpn_config_read"]);
 const SENSITIVE_DATA_PATH_RULES = new Set(["cloud_vpn_config_write", "cloud_vpn_config_read"]);
 const SENSITIVE_VPN_RE = /\.ovpn|wireguard|wg0\.conf|PrivateKey\s*=/i;
@@ -845,13 +854,13 @@ function sensitiveDataType(toolName, matchedRule, detailJson) {
   }
 }
 
-// 高级威胁检测——跟上面两组同一个思路（复用 policy.py 已经算好的 matched_rule），
-// 覆盖的是参考 al0ne/suricata-rules 目录分类新增的那批规则：挖矿矿池域名、MySQL
-// 任意文件写入落地 webshell、webshell 一句话马代码特征、下载脚本再分步执行、
-// 渗透测试/C2 框架工具调用、DNS/ICMP 隐蔽隧道工具调用。每个 matched_rule 固定归到
-// 一个分类，不需要像敏感数据那组一样再检查字段内容消歧——加新规则时把 id 加进
-// ADVANCED_THREAT_RULE_MAP 就行，同一个分类可以有多条规则（比如矿池域名的
-// command/write 两条变体）。
+// Advanced threat detection. Same idea as the two groups above (reuse the matched_rule policy.py has computed).
+// It covers the batch of rules added following the directory categories of al0ne/suricata-rules: mining pool
+// domains, MySQL arbitrary file writes dropping a webshell, webshell one-liner code signatures, scripts that
+// download and then execute in steps, penetration testing / C2 framework tool calls, and DNS/ICMP covert tunnel
+// tool calls. Each matched_rule maps to a fixed category, with no need to inspect field contents to
+// disambiguate as the sensitive data group does. To add a rule, add its id to ADVANCED_THREAT_RULE_MAP; one
+// category can have several rules (for example the command/write variants of the mining pool domain rule).
 const ADVANCED_THREAT_ORDER = ["cryptoMining", "dbFileWrite", "webshell", "reverseEscapeShell", "downloadExec", "c2Framework", "postExploitation", "suspiciousMcp", "pentestRecon", "covertTunnel"];
 const ADVANCED_THREAT_RULE_MAP = {
   crypto_miner_pool_domain_command: "cryptoMining",
@@ -874,10 +883,11 @@ function advancedThreatType(matchedRule) {
   return ADVANCED_THREAT_RULE_MAP[matchedRule] || null;
 }
 
-// 跨工作目录操作——policy.py 里 match="workdir" 的四条规则（cc_monitor/workdir.py 按
-// "路径相对 cwd 在哪 × 读/写"分档），这里同样只按 matched_rule 归类，不在 JS 里重算
-// 路径。注意这组规则排在规则表靠后的位置兜底：读 ~/.ssh 这种被更具体的规则先命中的
-// 事件算在那条规则里（敏感操作卡片），不会重复出现在这里。
+// Cross-workdir operations: the four rules with match="workdir" in policy.py (cc_monitor/workdir.py grades them by
+// "where the path is relative to cwd × read/write"). Here too they are only grouped by matched_rule, with no path
+// recalculation in JS. Note these rules sit near the end of the rule table as a fallback: an event like reading
+// ~/.ssh that a more specific rule matches first is counted under that rule (the sensitive operation card) and
+// does not appear here again.
 const WORKDIR_ESCAPE_ORDER = ["writeSensitive", "writeOther", "readSensitive", "readOther"];
 const WORKDIR_ESCAPE_RULE_MAP = {
   workdir_escape_write_sensitive: "writeSensitive",
@@ -918,9 +928,10 @@ function withDb(fn, fallback) {
   }
 }
 
-// `transcript_path` 列是 cc_monitor/storage.py 那边升级后才懒加载 ALTER TABLE 加上的
-// （见 storage.py 的 `_connect()`），旧数据库在第一次跑新版 hook 之前还没有这一列。
-// Node 这边是只读连接，不能自己补列，所以查询前先探测一下，没有就优雅降级。
+// The `transcript_path` column is added lazily by an ALTER TABLE after cc_monitor/storage.py upgrades (see
+// storage.py's `_connect()`), so an old database lacks it until the new hook first runs. The Node side has a
+// read-only connection and cannot add the column itself, so probe before querying and degrade gracefully if it
+// is missing.
 function hasTranscriptColumn(db) {
   try {
     const cols = db.prepare(`PRAGMA table_info(events)`).all();
@@ -991,19 +1002,20 @@ function stats() {
     const bypassTotal = db
       .prepare(`SELECT COUNT(*) AS n FROM events WHERE matched_rule = 'hook_bypass_suspected'`)
       .get().n;
-    // 绕过检测靠的是内核层 execve 观测跟 hook 记录比对，只有 Linux 的 bpftrace 探针
-    // 产生这种观测；macOS 那份探针用 nettop，只覆盖网络，所以 bypassTotal 在 macOS 上
-    // 恒为 0。前端必须能区分"查过了，是 0"和"这项检查在本平台没跑过"——否则界面上
-    // 那个 0 读起来像是安全结论，实际是能力缺失。
+    // Bypass detection relies on comparing kernel-level execve observations with hook records, and only the Linux
+    // bpftrace probe produces those. The macOS probe uses nettop and covers only the network, so bypassTotal is always
+    // 0 on macOS. The front end must be able to tell "checked, and it is 0" from "this check never ran on this
+    // platform"; otherwise that 0 reads like a safety verdict when it is really a missing capability.
     const bypassSupported = process.platform !== "darwin";
     return { total, sessionCount, blockedTotal, bypassTotal, bypassSupported, byRisk, byDecision, bySource };
   }, { total: 0, sessionCount: 0, blockedTotal: 0, bypassTotal: 0, bypassSupported: process.platform !== "darwin", byRisk: [], byDecision: [], bySource: [] });
 }
 
-// 文件读/写/编辑/删除次数——删除没有专门的工具（Claude Code 没有内置"删文件"工具），
-// 靠解析 Bash 命令文本（只看 detail.command 字段本身，按 ; & | 拆成子命令再看开头是不是
-// rm/rmdir/unlink/shred/git rm/find -delete 等）来识别，见上面 commandDeletesFiles()。
-// 不是 100% 精确（比如 $() 命令替换里的删除识别不到），但比之前的整串 LIKE 子串匹配准确得多。
+// File read/write/edit/delete counts. There is no dedicated delete tool (Claude Code has no built-in "delete
+// file" tool), so deletions are recognised by parsing Bash command text (only the detail.command field itself,
+// split into subcommands at ; & | to check whether they start with rm/rmdir/unlink/shred/git rm/find -delete
+// etc.); see commandDeletesFiles() above. Not 100% accurate (for example deletions inside $() command
+// substitution are missed), but far more accurate than the old whole-string LIKE substring match.
 const DELETE_CLAUSE = `source = 'hook_pre' AND tool_name = 'Bash' AND cc_is_delete(detail) = 1`;
 
 function fileOpsStats() {
@@ -1030,7 +1042,7 @@ const FILE_OP_TOOLS = {
   edit: ["Edit", "MultiEdit", "NotebookEdit"],
 };
 
-// 首页文件操作卡片（读/写/编辑/删除）的下钻详情：具体是哪些事件。
+// Drill-down details for the home page file operation cards (read/write/edit/delete): which events exactly.
 function fileOpDetails(type, limit = 300) {
   return withDb((db) => {
     if (type === "delete") {
@@ -1051,27 +1063,29 @@ function fileOpDetails(type, limit = 300) {
   }, []);
 }
 
-// 软件安装统计——不用另外写识别逻辑，直接复用 policy 规则引擎已经判过的 matched_rule
-// 分组就行（pip/系统包管理器/npm/其它这几类规则本来就在 default_rules.json 里维护着，
-// 识别逻辑只有一份，不会跟 policy 那边判断的标准不一致）。
+// Software install stats. No separate recognition logic: reuse the matched_rule groups the policy rule engine has
+// already judged (the pip / system package manager / npm / other rules are maintained in default_rules.json, so
+// there is one copy of the recognition logic and it cannot disagree with policy's judgement).
 const INSTALL_RULE_GROUPS = {
   pip: ["sudo_pip_install", "pip_install_venv_context", "pip_install_no_venv"],
-  // uv 单独一张卡，不并进 pip：它是另一个可执行文件、另一套规则，而且默认行为跟 pip
-  // 相反（没有激活的虚拟环境时 uv 直接报错而不是装进系统 Python），风险画像不一样，
-  // 混在一起统计会让"有多少次装进了系统 Python"这个数失真。
+  // uv gets its own card instead of being merged into pip: it is a different executable with different rules, and
+  // its default behaviour is the opposite of pip's (with no active virtual environment uv errors out instead of
+  // installing into the system Python). The risk profile differs, and mixing them would distort the count of "how
+  // many installs went into the system Python".
   uv: ["sudo_uv_pip_install", "uv_pip_install_system", "uv_pip_install", "uv_project_install"],
-  // conda/poetry/pipenv/pipx/pdm/rye 这一类：都是 Python 包，但既不是 pip 也不是 uv，
-  // 各自管自己的环境。跟 pip 分开统计，是因为"有多少次可能装进了系统 Python"这个问题
-  // 只有 pip 那一组答得上来。
+  // conda/poetry/pipenv/pipx/pdm/rye: all Python packages, but neither pip nor uv, each managing its own
+  // environment. Counted apart from pip because only the pip group can answer "how many installs may have gone into
+  // the system Python".
   pythonOther: ["python_package_install_other", "python_legacy_install"],
-  // npm / yarn / pnpm / bun / deno 合成一张"JS 包管理器"卡：对使用者来说它们是同一件事，
-  // 分成五张卡只会让每张都是个位数，看不出总量。全局安装那两条也在里面，下钻能区分。
+  // npm / yarn / pnpm / bun / deno share one "JS package managers" card: to users they are the same thing, and five
+  // cards would each show single digits with no sense of the total. The two global-install rules are in it too; the
+  // drill-down can tell them apart.
   js: ["npm_global_install", "npm_local_install", "js_package_install_global", "js_package_install"],
   toolchain: ["toolchain_install"],
   system: ["system_package_install"],
-  // 本地/全局两条规则都算进"npm 安装"这一张卡片的总数，点开详情时前端按
-  // matchedRule 再拆成"本地安装"/"全局安装"两组分别列出（见 app.js 的
-  // install-op-npm 特判），不是简单平铺一份列表。
+  // Both the local and global rules count toward the total of this one "npm install" card; when the details are
+  // opened the front end splits them by matchedRule into "local install" / "global install" groups (see the
+  // install-op-npm special case in app.js) rather than one flat list.
   other: ["package_install_other", "source_build_install", "container_image_pull", "editor_plugin_install"],
 };
 
@@ -1093,7 +1107,7 @@ function installStats() {
   }, Object.fromEntries(Object.keys(INSTALL_RULE_GROUPS).map((k) => [k, 0])));
 }
 
-// 首页软件安装统计卡片的下钻详情：具体是哪些安装指令。
+// Drill-down details for the home page software install card: which install commands exactly.
 function installDetails(type, limit = 300) {
   const rules = INSTALL_RULE_GROUPS[type];
   if (!rules) return [];
@@ -1109,11 +1123,12 @@ function installDetails(type, limit = 300) {
   }, []);
 }
 
-// GitHub/SSH/下载/Docker/压缩/网络诊断/进程管理这七组操作统计——首页原来每组各
-// 占一整排细分类卡片（合计 30+ 张），刷屏太厉害；改成每组只放一张汇总卡片，点开
-// 才展示这套分类的小计表 + 事件明细，跟 MCP/Skill/子代理调用卡片同一个交互模式。
-// 七组背后都是"按 cc_xxx_op() 自定义 SQL 函数分类、GROUP BY kind"这同一个查询
-// 形状，抽成两个通用函数，各组只是传不同的函数名进去。
+// Operation stats for seven groups: GitHub/SSH/download/Docker/compression/network diagnostics/process management.
+// The home page used to give each group a full row of per-category cards (30+ in total), far too cluttered; now
+// each group has a single summary card, and opening it shows that group's subtotal table + event details, the
+// same interaction as the MCP/Skill/subagent call cards. All seven share the same query shape, "classify with a
+// custom cc_xxx_op() SQL function, GROUP BY kind", extracted into two generic functions; each group just passes a
+// different function name.
 function opsBreakdown(sqlFn) {
   return withDb((db) => {
     return db
@@ -1156,11 +1171,12 @@ function downloadOpsBreakdown() {
 function downloadOpsEvents(limit = 300) {
   return opsEvents("cc_download_op", limit);
 }
-// 文件发送统计单独写，不复用上面的通用 opsBreakdown()/opsEvents()——那两个通用
-// 函数固定按 tool_name = 'Bash' 过滤，但这一类现在横跨 Bash 命令文本、Artifact
-// 工具的 asset 上传、MCP 文件发送类工具三种来源（见 fileSendOpType() 上面的注释），
-// 查询形状改成跟 sensitiveOpsBreakdown/sensitiveOpsEvents 一样，靠 cc_filesend_op()
-// 自己按 tool_name 分流、不匹配就返回 null 来过滤，不在 SQL WHERE 里限定单一工具名。
+// File send stats are written separately and do not reuse the generic opsBreakdown()/opsEvents() above. Those two
+// always filter on tool_name = 'Bash', but this category now spans three sources: Bash command text, the Artifact
+// tool's asset upload, and MCP file-sending tools (see the comment above fileSendOpType()). The query shape
+// follows sensitiveOpsBreakdown/sensitiveOpsEvents instead: cc_filesend_op() routes by tool_name itself and
+// returns null when nothing matches, which does the filtering, rather than restricting to one tool name in the
+// SQL WHERE.
 function fileSendOpsBreakdown() {
   return withDb((db) => {
     return db
@@ -1214,11 +1230,10 @@ function procbgOpsEvents(limit = 300) {
   return opsEvents("cc_procbg_op", limit);
 }
 
-// 敏感操作统计（SSH 密钥/凭据、Token、环境变量查找、其它敏感读取）——跟上面几组
-// 不一样，不是按 tool_name='Bash' 过滤后再看单个 detail 字段分类，而是直接按
-// 已经命中的 matched_rule 筛出 SENSITIVE_READ_RULES 那几条规则的事件（横跨
-// Read/Grep 和 Bash 几种工具），所以没法
-// 复用上面的通用 opsBreakdown()/opsEvents()，单独写。
+// Sensitive operation stats (SSH keys/credentials, tokens, environment variable lookup, other sensitive reads).
+// Unlike the groups above, this does not filter on tool_name='Bash' and then classify one detail field; it
+// selects the events of the SENSITIVE_READ_RULES rules directly by matched_rule (spanning Read/Grep and Bash),
+// so it cannot reuse the generic opsBreakdown()/opsEvents() above and is written separately.
 function sensitiveOpsBreakdown() {
   return withDb((db) => {
     return db
@@ -1243,8 +1258,8 @@ function sensitiveOpsEvents(limit = 300) {
   }, []);
 }
 
-// 敏感数据统计——查询形状跟上面 sensitiveOpsBreakdown/sensitiveOpsEvents 一样，
-// 只是筛的 matched_rule 集合不同（见 sensitiveDataType 上面的注释）。
+// Sensitive data stats: the query shape matches sensitiveOpsBreakdown/sensitiveOpsEvents above; only the
+// matched_rule set differs (see the comment above sensitiveDataType).
 function sensitiveDataBreakdown() {
   return withDb((db) => {
     return db
@@ -1269,9 +1284,9 @@ function sensitiveDataEvents(limit = 300) {
   }, []);
 }
 
-// 高级威胁检测——查询形状跟上面 sensitiveOpsBreakdown/sensitiveDataBreakdown 一样，
-// 只是分类函数只需要 matched_rule 一个参数（见 advancedThreatType 上面的注释，
-// 不需要再检查字段内容消歧）。
+// Advanced threat detection: the query shape matches sensitiveOpsBreakdown/sensitiveDataBreakdown above, except
+// the classifier needs only matched_rule as its argument (see the comment above advancedThreatType; no need to
+// inspect field contents to disambiguate).
 function advancedThreatBreakdown() {
   return withDb((db) => {
     return db
@@ -1296,7 +1311,7 @@ function advancedThreatEvents(limit = 300) {
   }, []);
 }
 
-// 跨工作目录操作——查询形状跟 advancedThreatBreakdown/advancedThreatEvents 一样。
+// Cross-workdir operations: the query shape matches advancedThreatBreakdown/advancedThreatEvents.
 function workdirEscapeBreakdown() {
   return withDb((db) => {
     return db
@@ -1321,9 +1336,9 @@ function workdirEscapeEvents(limit = 300) {
   }, []);
 }
 
-// 首页"截屏审计"卡片：单一计数，不像软件安装/GitHub 操作那样拆细分类——截屏本来
-// 就不常发生，没必要再按来源（Bash/Read/MCP）拆成好几张卡片，下钻列表里每一行的
-// 工具名本身就能看出是哪种来源。
+// The home page "screenshot audit" card: a single count, not split into categories like software install /
+// GitHub operations. Screenshots are rare anyway, so there is no need for several cards by source (Bash/Read/MCP);
+// the tool name on each row of the drill-down list already shows the source.
 function screenshotStats() {
   return withDb((db) => {
     const total = db.prepare(`SELECT COUNT(*) AS n FROM events WHERE source = 'hook_pre' AND cc_is_screenshot(tool_name, detail) = 1`).get().n;
@@ -1331,9 +1346,9 @@ function screenshotStats() {
   }, { total: 0 });
 }
 
-// 按方式分类小计：真截屏（截图工具 / headless 浏览器 / MCP 动作）和"只是打开了一张
-// 图片"混在一个数字里看不出差别——之前整卡 391 条几乎全是 imageRead，截图命令只有 3
-// 条却完全看不出来。
+// Subtotals by method: real screenshots (screenshot tool / headless browser / MCP action) and "only opened an
+// image" mixed into one number hide the difference. Before, the card's 391 events were almost all imageRead, and
+// the only 3 screenshot commands could not be seen at all.
 function screenshotBreakdown() {
   return withDb((db) => {
     return db
@@ -1359,9 +1374,9 @@ function screenshotDetails(limit = 300) {
   }, []);
 }
 
-// 工具调用统计——"审计事件总数"是 hook_pre + hook_post + os_net 全部加一起的，
-// 同一次工具调用至少算两条（pre 一条、post 一条），这里只数 hook_pre，对应的是
-// "Claude Code 真的发起过多少次工具调用"这个更直观的数字。
+// Tool call stats. The "total audit events" adds up hook_pre + hook_post + os_net, so one tool call counts at
+// least twice (one pre, one post). Only hook_pre is counted here, matching the more intuitive number "how many
+// tool calls Claude Code actually made".
 function toolCallStats() {
   return withDb((db) => {
     const total = db.prepare(`SELECT COUNT(*) AS n FROM events WHERE source = 'hook_pre'`).get().n;
@@ -1369,8 +1384,8 @@ function toolCallStats() {
   }, { total: 0 });
 }
 
-// 首页"工具调用"卡片下钻：按工具名分组的次数明细（不是每条事件平铺列出来——
-// 光是"调用过多少次 Bash"这种数字，比翻一屏事件列表更有信息量）。
+// Drill-down for the home page "tool calls" card: counts grouped by tool name (rather than listing every event
+// flat; a number like "how many times Bash was called" says more than a screenful of events).
 function toolCallBreakdown(limit = 100) {
   return withDb((db) => {
     return db
@@ -1383,9 +1398,8 @@ function toolCallBreakdown(limit = 100) {
   }, []);
 }
 
-// MCP 工具调用——Claude Code 给 MCP server 提供的工具统一命名成
-// `mcp__<server>__<tool>` 这个格式，不用另外维护一份 MCP server 列表，直接按
-// tool_name 前缀识别就行。
+// MCP tool calls. Claude Code names the tools it provides for MCP servers in the uniform format
+// `mcp__<server>__<tool>`, so no separate list of MCP servers is needed; recognise them by tool_name prefix.
 const MCP_TOOL_PATTERN = "mcp\\_\\_%";
 
 function mcpCallStats() {
@@ -1397,9 +1411,9 @@ function mcpCallStats() {
   }, { total: 0 });
 }
 
-// 首页"MCP 调用"卡片下钻：按 MCP server 分组（从 tool_name 里 mcp__<server>__<tool>
-// 这个约定格式解析出 server 名字），而不是按具体工具名——同一个 server 底下可能有
-// 十几个工具，按 server 汇总更容易看出"到底在跟哪个 MCP 服务打交道"。
+// Drill-down for the home page "MCP calls" card: grouped by MCP server (the server name parsed from the
+// mcp__<server>__<tool> convention in tool_name) rather than by tool name. One server may have a dozen tools, and
+// summing by server makes it easier to see "which MCP service it is actually dealing with".
 function mcpCallBreakdown(limit = 100) {
   return withDb((db) => {
     const rows = db
@@ -1418,10 +1432,10 @@ function mcpCallBreakdown(limit = 100) {
   }, []);
 }
 
-// Skill 调用——跟 MCP 调用同一个思路，只是分组用的不是 tool_name 前缀，而是
-// tool_input 里的 skill 字段本身（`Skill` 这个工具名固定不变，具体调用的是哪个
-// skill 全在 detail.skill 里）。SQLite 自带的 json_extract 直接在 SQL 里取，
-// 不用先把每一行 detail 都读出来在 JS 里 JSON.parse 一遍。
+// Skill calls: same idea as MCP calls, except the grouping is not by tool_name prefix but by the skill field in
+// tool_input (the tool name `Skill` never changes; which skill was called is all in detail.skill). SQLite's
+// built-in json_extract reads it directly in SQL, so there is no need to read every row's detail and JSON.parse
+// it in JS.
 function skillCallStats() {
   return withDb((db) => {
     const total = db.prepare(`SELECT COUNT(*) AS n FROM events WHERE source = 'hook_pre' AND tool_name = 'Skill'`).get().n;
@@ -1441,10 +1455,10 @@ function skillCallBreakdown(limit = 100) {
   }, []);
 }
 
-// Glob/Grep 调用统计——纯搜索类工具，本来就已经算在"工具调用"总数和它的按工具名
-// 分组下钻里，这里单独拉出来是因为搜索操作本身是个值得单独一瞥的行为模式（翻了
-// 多少次代码库），跟 MCP/Skill 调用同一个思路，只是分组字段用 tool_name 本身
-// （Glob vs Grep），不需要 json_extract 从 detail 里再挑一层。
+// Glob/Grep call stats. These pure search tools are already in the "tool calls" total and its by-tool-name
+// drill-down; they are pulled out here because searching is a behaviour pattern worth a separate glance (how many
+// times the codebase was searched). Same idea as the MCP/Skill calls, except the grouping field is tool_name
+// itself (Glob vs Grep), with no need for json_extract to pick another level out of detail.
 function searchCallStats() {
   return withDb((db) => {
     const total = db.prepare(`SELECT COUNT(*) AS n FROM events WHERE source = 'hook_pre' AND tool_name IN ('Glob', 'Grep')`).get().n;
@@ -1476,10 +1490,10 @@ function searchCallEvents(limit = 300) {
   }, []);
 }
 
-// TodoWrite 使用频率——纯统计，没有安全含义，只看调用了多少次；下钻的事件明细额外
-// 带上每次调用时任务列表的条数（json_array_length 直接在 SQL 里算，不用先把每行
-// detail 都读出来在 JS 里 JSON.parse 一遍），不展示任务的具体文字内容——跟其它
-// 下钻卡片一样，只给"发生过什么规模的操作"这类基本信息。
+// TodoWrite usage frequency: pure stats with no security meaning, only how many calls. The drill-down event
+// details also include the number of tasks in the list at each call (json_array_length computed directly in SQL,
+// no need to read every row's detail and JSON.parse it in JS), without showing the task text. Like the other
+// drill-down cards, it gives only basic information about "what scale of operation happened".
 function todoCallStats() {
   return withDb((db) => {
     const total = db.prepare(`SELECT COUNT(*) AS n FROM events WHERE source = 'hook_pre' AND tool_name = 'TodoWrite'`).get().n;
@@ -1499,9 +1513,9 @@ function todoCallEvents(limit = 300) {
   }, []);
 }
 
-// 工具调用/MCP 调用/Skill 调用这三张卡片下钻的"事件明细"部分——按工具名分组的次数
-// 只能看出"用得多不多"，看不出"具体是哪个 session、哪个目录、什么时候调用的"，
-// 这三个函数专门补这块：平铺列出最近的事件，带 Session ID/cwd/时间戳。
+// The "event details" part of the drill-down for the tool call / MCP call / Skill call cards. Counts by tool name
+// only show "used a lot or not", not "which session, which directory, when". These three functions fill that
+// gap: they list recent events flat, with Session ID/cwd/timestamp.
 function toolCallEvents(limit = 300) {
   return withDb((db) => {
     return db
@@ -1534,12 +1548,11 @@ function skillCallEvents(limit = 300) {
   }, []);
 }
 
-// 子代理（Task/Agent）派生统计——跟 MCP/Skill 调用完全同一个思路，只是分组字段
-// 换成 tool_input 里的 subagent_type（"用的是哪个子代理类型"，比如
-// general-purpose/Explore/Plan/fork，或者用户自定义的子代理名字）。Claude Code
-// 不同版本这个工具名叫 "Task" 还是 "Agent" 不完全一致，两个都认。子代理本身会
-// 消耗独立的资源、有自己的一整套操作轨迹，值得单独拉出来看，而不是混在笼统的
-// "工具调用"计数里。
+// Subagent (Task/Agent) spawn stats: exactly the same idea as MCP/Skill calls, except the grouping field is
+// subagent_type in tool_input ("which subagent type was used", such as general-purpose/Explore/Plan/fork, or a
+// user-defined subagent name). Claude Code versions differ on whether the tool is called "Task" or "Agent", so
+// both are accepted. Subagents consume their own resources and have a whole trail of operations of their own,
+// worth pulling out separately rather than mixing into the general "tool calls" count.
 function subagentCallStats() {
   return withDb((db) => {
     const total = db
@@ -1574,15 +1587,16 @@ function subagentCallEvents(limit = 300) {
   }, []);
 }
 
-// AI 轨迹卡片下钻的事件明细部分——两种不同性质的证据拼在一起，靠 inferred 字段
-// 区分：
-//   - 探针实测（source='os_net'，inferred=false）：探针只在内核层面看到 pid/uid，
-//     天生不知道"这属于 Claude Code 的哪个 session"，所以 sessionId/cwd 在这些行
-//     里永远是空的，不是查询漏了字段——前端要如实显示"不可用"，不能编一个假的
-//     出来。能给的是时间戳和 pid（探针观测到的进程号，勉强算是"哪个进程"的线索）。
-//   - 命令文本推断（inferred=true）：来自 commandNetworkHosts()，有 sessionId/cwd/
-//     具体命令，但没有 pid（这条命令有没有真的连通、连的是不是文本里那个 host，
-//     都只是"看起来像"，不是探针那种内核级别的确认）。
+// The event details part of the AI trail card drill-down. Two different kinds of evidence are combined,
+// distinguished by the inferred field:
+//   - Probe measurements (source='os_net', inferred=false): the probe sees only pid/uid at the kernel level and
+//     cannot know "which Claude Code session this belongs to", so sessionId/cwd are always empty on these rows.
+//     That is not a field the query missed; the front end must show "unavailable" as is, never invent a value.
+//     What it can give is the timestamp and pid (the process id the probe observed, a rough clue to "which
+//     process").
+//   - Command text inference (inferred=true): from commandNetworkHosts(), with sessionId/cwd/the exact command,
+//     but no pid (whether the command really connected, and to the host in the text, is only "looks like", not
+//     a kernel-level confirmation like the probe's).
 function networkConnectEvents(limit = 300) {
   const observed = withDb((db) => {
     const rows = db
@@ -1625,14 +1639,14 @@ function networkConnectEvents(limit = 300) {
     .slice(0, limit);
 }
 
-// 时间线视图的数据源：给定一批 session_id（首页最近会话列表，通常几十个），每个会话
-// 各自按 id 倒序取最近 perSessionLimit 条事件，用窗口函数一次查完（不对每个 session_id
-// 单独发一条 SQL）。真正的"落进哪个时间桶"完全在调用方（server.js 的 /api/timeline
-// 路由）用 JS 的 Date 来算，这里不碰 strftime()/datetime()——events.ts 是 Python
-// time.strftime("%Y-%m-%dT%H:%M:%S%z") 写的本地时间，%z 出来的偏移量没有冒号
-// （比如 "+0800" 不是 "+08:00"），SQLite 的日期函数只认带冒号的 ISO8601 偏移量，
-// 喂这种格式进去会静默解析失败返回 NULL（已用 sqlite_version 3.53.4 验证）。JS 的
-// Date 构造函数对这个格式是宽容的，所以按时间分桶只能在 JS 层做。
+// Data source for the timeline view: given a batch of session_ids (the home page's recent session list, usually a
+// few dozen), take each session's most recent perSessionLimit events in descending id order, in one query with a
+// window function (not one SQL statement per session_id). Which time bucket each event falls into is computed
+// entirely by the caller (the /api/timeline route in server.js) with JS Date; strftime()/datetime() are not used
+// here. events.ts is local time written by Python's time.strftime("%Y-%m-%dT%H:%M:%S%z"), and %z gives an offset
+// without a colon (for example "+0800", not "+08:00"). SQLite's date functions only accept ISO8601 offsets with a
+// colon, and silently fail to parse this format and return NULL (verified with sqlite_version 3.53.4). JS's Date
+// constructor is lenient with this format, so time bucketing can only be done in JS.
 function timelineEvents({ sessionIds = [], perSessionLimit = 800 } = {}) {
   if (!sessionIds.length) return [];
   return withDb((db) => {
@@ -1651,8 +1665,9 @@ function timelineEvents({ sessionIds = [], perSessionLimit = 800 } = {}) {
   }, []);
 }
 
-// 单个会话最近 limit 条完整事件（按时间正序），流程图视图用。queryEvents() 带 limit
-// 取的是最早的那几条，长会话要看的是最近的操作，所以这里倒序取完再翻回来。
+// A single session's most recent limit full events (in chronological order), for the flow view. queryEvents()
+// with a limit takes the earliest ones, but a long session needs the latest operations, so take them in
+// descending order and flip them back.
 function sessionEventsTail(sessionId, limit = 3000) {
   return withDb((db) => {
     const rows = db
@@ -1665,7 +1680,7 @@ function sessionEventsTail(sessionId, limit = 3000) {
   }, []);
 }
 
-// "审计事件总数"下钻：按 工具/来源 分组，并且列出每个分组具体是哪些 session 产生的。
+// "Total audit events" drill-down: grouped by tool/source, listing which sessions produced each group.
 function eventTypeBreakdown(limit = 500) {
   return withDb((db) => {
     const rows = db
@@ -1690,7 +1705,7 @@ function eventTypeBreakdown(limit = 500) {
   }, []);
 }
 
-// "拦截的高危操作"下钻：具体是哪些命令/操作被挡下来的。
+// "Blocked high-risk operations" drill-down: which commands/operations were stopped.
 function blockedDetails(limit = 200) {
   return withDb((db) => {
     return db

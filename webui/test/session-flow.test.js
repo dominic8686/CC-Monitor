@@ -5,7 +5,7 @@ const { buildSessionFlow, postStatus } = require("../lib/sessionFlow");
 
 let nextId = 1;
 const T0 = Date.parse("2026-09-27T05:00:00+09:00");
-// 跟 Python time.strftime("%Y-%m-%dT%H:%M:%S%z") 同样的无冒号偏移格式
+// Same colon-less offset format as Python time.strftime("%Y-%m-%dT%H:%M:%S%z")
 function ts(sec) {
   const d = new Date(T0 + sec * 1000);
   const p = (n) => String(n).padStart(2, "0");

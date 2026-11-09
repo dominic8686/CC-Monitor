@@ -1,8 +1,9 @@
 "use strict";
-// 规则表的元信息（title/desc 中英文、风险、动作）——给"AI 审批台"和审批历史用：
-// 光看规则 id（比如 git_force_push）人不知道要确认的是什么，得配一句通俗解释。
-// 读的是用户目录下那份 rules.json（~/.cc-monitor/rules.json，Python 侧 ensure_config()
-// 会把新版默认规则合并进去），读不到就退回仓库里的 default_rules.json。只读，不写。
+// Rule table metadata (Chinese and English title/desc, risk, action), used by AI Approvals and
+// the approval history: a bare rule id (e.g. git_force_push) does not tell a person what they are
+// confirming, so it needs a plain explanation. Reads rules.json in the user directory
+// (~/.cc-monitor/rules.json; ensure_config() on the Python side merges new default rules into it),
+// falling back to default_rules.json in the repository when that is unreadable. Read-only.
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
@@ -32,13 +33,14 @@ function readRules() {
   return readJson(userRulesPath()) || readJson(defaultRulesPath()) || [];
 }
 
-// 返回 { <rule id>: { title, desc, title_en, desc_en, risk, action } }
+// Returns { <rule id>: { title, desc, title_en, desc_en, risk, action } }
 function ruleMeta() {
   const now = Date.now();
   if (now - cache.at < CACHE_MS) return cache.byId;
-  // 用户 rules.json 里被改过的规则，Python 的默认规则合并会刻意跳过（不覆盖用户的
-  // 修改），于是这些规则拿不到新版加的 title/desc。展示时按 id 回退到仓库内置默认
-  // 表的文案——只影响显示，绝不写回用户文件。
+  // The Python default-rule merge deliberately skips rules the user has edited in rules.json (it
+  // does not overwrite user changes), so those rules miss newly added title/desc text. For
+  // display, fall back by id to the text of the built-in default table in the repository. This
+  // only affects display and never writes back to the user's file.
   const fallback = {};
   for (const r of readJson(defaultRulesPath()) || []) {
     if (r && typeof r.id === "string") fallback[r.id] = r;

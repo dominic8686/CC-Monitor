@@ -5,14 +5,15 @@ const path = require("path");
 const Database = require("better-sqlite3");
 const { dbPath } = require("./audit");
 
-const RECENT_MS = 15 * 60 * 1000; // 15 分钟内写过 transcript 就算"最近有活动"
+const RECENT_MS = 15 * 60 * 1000; // a transcript written within 15 minutes counts as "recently active"
 
 function claudeProjectsDir() {
   return path.join(os.homedir(), ".claude", "projects");
 }
 
-// 扫 ~/.claude/projects/*/*.jsonl（不进 subagents/ 子目录，那些是子代理自己的记录，
-// 不代表一个独立的 Claude Code 会话），找最近被写过的 transcript 文件。
+// Scan ~/.claude/projects/*/*.jsonl (not the subagents/ subdirectories, which are subagents' own
+// records and do not represent an independent Claude Code session) for recently written
+// transcript files.
 function findRecentTranscripts(withinMs) {
   const dir = claudeProjectsDir();
   if (!fs.existsSync(dir)) return [];
@@ -45,11 +46,12 @@ function findRecentTranscripts(withinMs) {
   return results;
 }
 
-// 找出"transcript 最近确实被写过（说明这个 Claude Code 会话正在被使用），但审计库里
-// 一条它的事件都没有"的会话——这不是计数算错了，是 Claude Code 的 hooks 配置只在会话
-// 启动那一刻加载一次、不会中途热更新：这种会话大概率是在 CC-Monitor 代码/hooks 配置
-// 更新之前就已经启动的，还在用启动那一刻的旧配置，我们没法从外部强制它重新加载，
-// 唯一的办法是退出重开这个会话（重新执行一次 claude / claude --resume）。
+// Find sessions whose "transcript was written recently (so this Claude Code session is in use)
+// but the audit database has not a single event for it". This is not a counting error: Claude
+// Code loads its hooks configuration only once, when the session starts, and never hot-reloads
+// it. Such a session was most likely started before the CC-Monitor code / hooks configuration was
+// updated and still uses the old configuration from its start. We cannot force it to reload from
+// outside; the only way is to quit and reopen that session (run claude / claude --resume again).
 function findUnmonitoredActiveSessions() {
   const recent = findRecentTranscripts(RECENT_MS);
   if (recent.length === 0) return [];

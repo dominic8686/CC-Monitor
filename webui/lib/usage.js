@@ -1,20 +1,22 @@
 "use strict";
-// 账号级用量/额度信息——跟 ccstatusline (https://github.com/sirmalloc/ccstatusline) 读的是
-// 同一份东西：Claude Code 自己写在本地的 OAuth 凭证文件，用它调 Anthropic 的用量查询接口。
-// 不是我们自己的接口，是逆向 ccstatusline 实现确认过的：
-//   凭证: claudeAiOauth.accessToken（Linux 在 ~/.claude/.credentials.json，macOS 在钥匙串，
-//         见 lib/credentials.js）
-//   接口: GET https://api.anthropic.com/api/oauth/usage  (Bearer token)
-// 只读查询，用的是 Claude Code 本来就持有、本来就信任的凭证，不做任何写操作。
+// Account-level usage/quota. Reads the same thing as ccstatusline
+// (https://github.com/sirmalloc/ccstatusline): the OAuth credentials file Claude Code writes
+// locally, used to call Anthropic's usage endpoint. This is not our own API; it was confirmed by
+// reverse-engineering the ccstatusline implementation:
+//   credentials: claudeAiOauth.accessToken (~/.claude/.credentials.json on Linux, the Keychain
+//         on macOS, see lib/credentials.js)
+//   endpoint: GET https://api.anthropic.com/api/oauth/usage  (Bearer token)
+// Read-only query using credentials Claude Code already holds and trusts; no writes of any kind.
 const https = require("https");
 const { readClaudeOauth, credentialsLocationHint, isExpired } = require("./credentials");
-// https-proxy-agent 装的是纯 ESM 包（package.json 里 "type":"module"，没有 require 导出条件），
-// 普通 node（本环境是 v22，支持同步 require(esm)）能 require 但 Electron 自带的旧版 Node 不行，
-// 会直接抛 ERR_REQUIRE_ESM 把桌面版启动流程崩掉——改成动态 import() 两边都兼容。
+// https-proxy-agent is installed as a pure ESM package ("type":"module" in package.json, no
+// require export condition). Plain node (v22 here, which supports synchronous require(esm)) can
+// require it, but the older Node bundled with Electron cannot and throws ERR_REQUIRE_ESM, crashing
+// the desktop app's startup. A dynamic import() works on both.
 
 const USAGE_API_HOST = "api.anthropic.com";
 const USAGE_API_PATH = "/api/oauth/usage";
-const CACHE_MAX_AGE_MS = 180 * 1000; // 跟 ccstatusline 一样，避免把接口打太狠
+const CACHE_MAX_AGE_MS = 180 * 1000; // same as ccstatusline, to avoid hammering the endpoint
 
 async function proxyAgent() {
   const proxyUrl = process.env.HTTPS_PROXY || process.env.https_proxy;
@@ -29,14 +31,14 @@ async function proxyAgent() {
 
 let cached = null; // { fetchedAt, data } | { fetchedAt, error }
 
-// 返回 { token } 或 { error }：凭证没有 / 已过期分开提示，别都糊成 "usage API 返回 401"。
+// Returns { token } or { error }: missing and expired credentials get separate messages instead of both blurring into "usage API returned 401".
 function readAccessToken() {
   const oauth = readClaudeOauth();
   if (!oauth?.accessToken) {
-    return { error: `没找到 Claude Code 的登录凭证 (${credentialsLocationHint()})，无法查询额度` };
+    return { error: `Claude Code login credentials not found (${credentialsLocationHint()}), cannot query quota` };
   }
   if (isExpired(oauth)) {
-    return { error: "Claude Code 登录凭证已过期，在 Claude Code 里跑一次任意命令让它自动刷新，或执行 /login 重新登录" };
+    return { error: "Claude Code login credentials have expired. Run any command in Claude Code so it refreshes them, or run /login to sign in again" };
   }
   return { token: oauth.accessToken };
 }
@@ -49,9 +51,10 @@ function bucketInfo(bucket) {
   };
 }
 
-// `limits` 数组是接口里比 five_hour/seven_day 更细一档的额度明细——同一个 kind
-// （session/weekly_all/weekly_scoped）在不同 severity（normal/警告级别）下都会单独
-// 列一条，weekly_scoped 那种还带具体是限定给哪个模型（scope.model）的。
+// The `limits` array is a quota breakdown one level finer than five_hour/seven_day: the same kind
+// (session/weekly_all/weekly_scoped) gets its own entry at each severity (normal / warning
+// levels), and weekly_scoped entries also carry the specific model they are scoped to
+// (scope.model).
 function limitInfo(l) {
   return {
     kind: l.kind || null,
@@ -64,8 +67,9 @@ function limitInfo(l) {
   };
 }
 
-// `spend`：账号超出套餐额度之后能不能/有没有额外花钱买用量（Anthropic 的"usage credits"），
-// 跟 five_hour/seven_day 那种"百分比额度"是两码事，这里是实打实的金额。
+// `spend`: whether the account can buy / has bought extra usage beyond the plan quota
+// (Anthropic's "usage credits"). Not the same thing as the "percentage quota" of
+// five_hour/seven_day; this is an actual amount of money.
 function spendInfo(spend) {
   if (!spend) return null;
   return {
@@ -100,16 +104,17 @@ async function fetchUsageOnce(token) {
         res.on("data", (d) => (body += d));
         res.on("end", () => {
           if (res.statusCode !== 200) {
-            resolve({ error: `usage API 返回 ${res.statusCode}` });
+            resolve({ error: `usage API returned ${res.statusCode}` });
             return;
           }
           try {
             const parsed = JSON.parse(body);
             const rawLimits = Array.isArray(parsed.limits) ? parsed.limits : [];
-            // 有些模型（目前观察到的是 Fable）没有专门的顶层字段（不像 opus/sonnet 那样
-            // 有 seven_day_opus/seven_day_sonnet），额度只挂在 limits[] 里一条
-            // kind="weekly_scoped" 记录上，scope.model.display_name 就是模型名——
-            // 不写死"Fable"，这样以后 Anthropic 加别的按模型限额也自动跟着显示。
+            // Some models (Fable, so far) have no dedicated top-level field (unlike opus/sonnet,
+            // which have seven_day_opus/seven_day_sonnet); their quota hangs only on one
+            // kind="weekly_scoped" entry in limits[], with scope.model.display_name as the model
+            // name. "Fable" is not hard-coded, so future per-model limits from Anthropic show up
+            // automatically.
             const perModelWeekly = rawLimits
               .filter((l) => l.kind === "weekly_scoped" && l?.scope?.model?.display_name)
               .map((l) => ({
@@ -129,14 +134,14 @@ async function fetchUsageOnce(token) {
               },
             });
           } catch (e) {
-            resolve({ error: "usage API 返回内容解析失败" });
+            resolve({ error: "Failed to parse the usage API response" });
           }
         });
       }
     );
     req.on("timeout", () => {
       req.destroy();
-      resolve({ error: "usage API 请求超时" });
+      resolve({ error: "usage API request timed out" });
     });
     req.on("error", (e) => resolve({ error: e.message }));
     req.end();

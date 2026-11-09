@@ -1,13 +1,13 @@
 "use strict";
-// ISO 3166-1 alpha-2 国家/地区代码 -> 简体中文常用名。
+// ISO 3166-1 alpha-2 country/region code -> common Simplified Chinese name.
 //
-// 只在 geoip.js 兜底用：像 dbip-city.mmdb（DB-IP Lite，sapics/ip-location-db 转出来
-// 的那份）这种扁平格式数据源，压根没有多语言 names 字段（甚至连英文国家全名都没有，
-// 只有 country_code 这个 ISO 代码），mmdb 自身的 city.names.zh-CN 选择逻辑在这上面
-// 完全用不上——这张表是独立于 mmdb 数据的静态翻译，只覆盖"国家/地区"这一级，城市名
-// （比如 "Tseung Kwan O"）没有对应的中文数据源，翻不出来，如实保留英文。想要城市级
-// 中文名的话，需要换成 MaxMind 官方 GeoLite2-City.mmdb（自带 zh-CN 城市名，见
-// geoip.js 顶部注释的下载方式）。
+// Used only as a fallback in geoip.js: flat-format data sources like dbip-city.mmdb (DB-IP Lite, the copy converted by
+// sapics/ip-location-db) have no multilingual names field at all (not even full English country names,
+// only the ISO code in country_code), so the mmdb's own city.names.zh-CN selection logic
+// cannot be used on them. This table is a static translation independent of the mmdb data and covers only the country/region level; city names
+// (such as "Tseung Kwan O") have no Chinese data source, cannot be translated, and are kept in English as-is. For city-level
+// Chinese names, switch to MaxMind's official GeoLite2-City.mmdb (which includes zh-CN city names; see
+// the download instructions in the comment at the top of geoip.js).
 const COUNTRY_NAMES_ZH = {
   AD: "安道尔", AE: "阿联酋", AF: "阿富汗", AG: "安提瓜和巴布达", AI: "安圭拉",
   AL: "阿尔巴尼亚", AM: "亚美尼亚", AO: "安哥拉", AQ: "南极洲", AR: "阿根廷",

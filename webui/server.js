@@ -26,50 +26,54 @@ const processScan = require("./lib/processScan");
 const network = require("./lib/network");
 const geoip = require("./lib/geoip");
 
-// 这个进程里活着好几个终端 PTY 会话——任何一个请求/WS 消息里冒出来的未捕获异常，
-// Node 默认行为是直接把整个进程干掉，等于所有终端会话（不管跟那个异常有没有关系）
-// 全部瞬间消失，用户毫无预兆地"突然就没了"。这里跟 cc_monitor 的 hook.py 同一个
-// 思路："fail open"：记下来，但绝不能让一次意外把所有活着的会话陪葬。
+// Several terminal PTY sessions live in this process. By default Node kills the whole process
+// on an uncaught exception from any request or WS message, so every terminal session (related
+// to that exception or not) vanishes at once with no warning. Same idea as hook.py in
+// cc_monitor: "fail open". Log it, but never let one accident take down every live session.
 process.on("uncaughtException", (err) => {
-  console.error("[CC-Monitor WebUI] 未捕获异常（已忽略，继续运行）:", err);
+  console.error("[CC-Monitor WebUI] Uncaught exception (ignored, still running):", err);
 });
 process.on("unhandledRejection", (err) => {
-  console.error("[CC-Monitor WebUI] 未处理的 Promise rejection（已忽略，继续运行）:", err);
+  console.error("[CC-Monitor WebUI] Unhandled Promise rejection (ignored, still running):", err);
 });
 
-// 默认只绑定 localhost：这是一个能直接开终端 spawn 进程的工具，绝不能不加认证就暴露到
-// 公网/局域网。这个默认值不会被 UI 上的"允许远程访问"开关自动改掉——真要监听所有网卡，
-// 得管理员自己显式设置 CC_MONITOR_WEBUI_HOST=0.0.0.0 再重启进程，安全边界始终是进程
-// 启动时就定死的监听地址，不是运行时能被网页动态改掉的一个标志位。
-// UI 开关（remoteAccess）管的是另一件事：即使显式绑成了 0.0.0.0，下面的中间件/
-// WebSocket upgrade 也会先查这个开关，默认关（拒绝非本机来源），开了才放行——
-// 相当于给"我确实想监听所有网卡"这个场景再加一道默认是关的应用层闸门。
+// Bind to localhost only by default: this tool can open terminals and spawn processes, so it
+// must never be exposed to the internet or LAN without authentication. The "Allow remote access"
+// switch in the UI does not change this default. To listen on all interfaces the admin must set
+// CC_MONITOR_WEBUI_HOST=0.0.0.0 explicitly and restart the process: the security boundary is the
+// listen address fixed at process start, not a flag a web page can flip at runtime.
+// The UI switch (remoteAccess) controls something else: even when bound to 0.0.0.0, the
+// middleware and WebSocket upgrade below check it first. It defaults to off (non-local sources
+// are refused) and only lets them through when on, an extra application-layer gate, off by
+// default, for the "I really do want to listen on all interfaces" case.
 const HOST = process.env.CC_MONITOR_WEBUI_HOST || "127.0.0.1";
 const PORT = parseInt(process.env.CC_MONITOR_WEBUI_PORT || "9999", 10);
 
 const app = express();
 app.use(express.json());
 
-// 访问控制闸门：不是本机来源、且"允许远程访问"开关没打开的请求，一律 403，碰不到
-// 下面任何一条路由/静态文件。放在最前面，对所有请求都生效。默认绑定 127.0.0.1 时
-// 这道检查其实永远不会拦到任何东西（只有本机才连得上 socket），只有管理员显式把
-// HOST 改成 0.0.0.0 之后，这里才是真正起作用的那道闸门。
+// Access gate: any request that is not from this machine, while "Allow remote access" is off,
+// gets 403 and never reaches a route or static file below. It sits first and applies to every
+// request. With the default 127.0.0.1 bind this check never blocks anything (only this machine
+// can reach the socket); it only becomes the real gate once the admin sets HOST to 0.0.0.0.
 app.use((req, res, next) => {
   const addr = req.socket.remoteAddress;
   if (remoteAccess.isLocalAddress(addr) || remoteAccess.getState().allowRemote) return next();
   res.status(403).type("text/plain").send("Forbidden: remote access to CC-Monitor is disabled. Enable it from the Home tab (from the local machine), or connect from 127.0.0.1.");
 });
 
-// 这个 UI 还在快速迭代，public/ 底下的文件随时会变；不加 no-store 的话浏览器可能
-// 拿着缓存的旧 app.js/index.html 不去问服务器，改了东西却"看起来没生效"，很难排查。
+// This UI is still changing fast and files under public/ change at any time. Without no-store
+// the browser may use a cached app.js/index.html without asking the server, so a change
+// "seems to have no effect", which is hard to track down.
 const noCacheStatic = (dir) => express.static(dir, { etag: false, lastModified: false, setHeaders: (res) => res.setHeader("Cache-Control", "no-store") });
 
-// `Cache-Control: no-store` 只对"守规矩、会去读这个响应头"的缓存有效——浏览器磁盘缓存、
-// 中间的透明代理（这台机器上就跑着一个 mihomo/Clash，如果客户端把 127.0.0.1 也走了代理，
-// 代理自己的缓存策略就不一定尊重源站的 Cache-Control 了）都可能对不上号，表现就是"服务端
-// 文件明明改了/重启了，页面却死活还是旧的"。这里给 index.html 里引用的几个核心脚本/样式
-// 加一个跟着进程启动时间变的版本号（`?v=<timestamp>`），换了 URL 的资源对任何缓存来说都是
-// "新对象"，不用靠对方老老实实遵守 no-store。
+// `Cache-Control: no-store` only works for caches that honour that header. The browser disk
+// cache and transparent proxies in between (this machine runs mihomo/Clash; if the client also
+// routes 127.0.0.1 through the proxy, the proxy's own cache policy may ignore the origin's
+// Cache-Control) can disagree, and the symptom is "the server file changed / restarted, but the
+// page is still the old one". So the core scripts and styles referenced from index.html get a
+// version tied to process start time (`?v=<timestamp>`). A resource with a new URL is a "new
+// object" to any cache, without relying on it obeying no-store.
 const ASSET_VERSION = String(Date.now());
 app.get("/", (req, res) => {
   let html = fs.readFileSync(path.join(__dirname, "public", "index.html"), "utf8");
@@ -88,19 +92,22 @@ app.use("/vendor/xterm-addon-webgl", noCacheStatic(path.join(__dirname, "node_mo
 
 const sessions = new SessionManager();
 
-// ---- REST API: 终端会话管理 ----
+// ---- REST API: terminal session management ----
 
-// Web UI 自己开的 PTY 会话（sessions.list() 里的 id）跟 hooks 记录的 Claude Code
-// session_id 是两套完全不相关的 id——PTY 那个是我们自己 crypto.randomUUID() 出来的，
-// Claude Code 自己另外生成它的 session_id，两边没有天然的对应关系。只能靠 cwd 相同
-// 这个弱关联去猜：同一个工作目录里，活动时间最新的那个审计 session，大概率就是这个
-// PTY 里跑着的那个 claude 进程——不保证 100% 准确（同一个目录被开了好几次的话可能猜错），
-// 但足够在首页"进行中"这张下钻详情里顺带显示一下模型/事件数，不做成分开另查的功能。
-// 状态标记（working/blocked/idle），跟 herdr "每个 pane 标状态、不用到处找卡住的
-// 那个" 是同一个思路——不是另起一套检测机制，直接复用已经有的两个数据源：
-// 有没有待处理的审批请求（pending_approvals，谁先出现就是 blocked，最该优先看的）；
-// 终端最近有没有真输出过东西、或者审计事件最近有没有新记录（两个但凡一个命中就算
-// 在正常干活）；两个都没有就是 idle——大概率是停在提示符前等你打字，不是卡住了。
+// PTY sessions opened by the Web UI (ids from sessions.list()) and the Claude Code session_id
+// recorded by hooks are two unrelated id spaces: the PTY id comes from our own
+// crypto.randomUUID(), Claude Code generates its own session_id, and there is no natural mapping.
+// The only link is the weak one of matching cwd: in the same working directory, the audit
+// session with the latest activity is most likely the claude process running in this PTY. Not
+// 100% accurate (it can guess wrong when one directory was opened several times), but good
+// enough to show model / event count in the Home "in progress" drill-down, without a separate
+// lookup feature.
+// Status marker (working/blocked/idle), the same idea as herdr's "mark each pane with a status
+// so you don't hunt for the stuck one". No new detection mechanism; it reuses two existing
+// data sources: whether there is a pending approval request (pending_approvals; if present it is
+// blocked, the one to look at first); and whether the terminal produced real output recently or
+// the audit log has a recent event (either one counts as working). Neither means idle: most
+// likely sitting at the prompt waiting for you to type, not stuck.
 const RECENT_ACTIVITY_MS = 30 * 1000;
 function computeSessionStatus(s, matchedAuditSessionId, matchedLastTs, pendingSessionIds) {
   if (matchedAuditSessionId && pendingSessionIds.has(matchedAuditSessionId)) return "blocked";
@@ -110,15 +117,18 @@ function computeSessionStatus(s, matchedAuditSessionId, matchedLastTs, pendingSe
   return recentOutput || recentEvent ? "working" : "idle";
 }
 
-// 跟上面那个 RECENT_ACTIVITY_MS（30 秒）是同一个"working/idle"思路，但用在一个不同的
-// 数据源上：Web UI 终端的 PTY 每敲一个字符都会有输出，30 秒足够灵敏；被动监测到的
-// 外部终端会话（这里说的"会话列表"/"claude 进程明细"）只在真的调用工具的那一刻才有
-// 事件，模型"思考"、用户读输出的间隙完全正常能有几十秒到几分钟的空档，卡太紧的话
-// 大部分正常在工作的会话都会被误判成"空闲"，放宽到 5 分钟。
+// Same "working/idle" idea as RECENT_ACTIVITY_MS (30 seconds) above, but for a different data
+// source: a Web UI terminal PTY produces output for every keystroke, so 30 seconds is sensitive
+// enough. Externally monitored terminal sessions (the "session list" / "claude process details"
+// here) only produce events at the moment a tool is called; gaps of tens of seconds to minutes
+// while the model is thinking or the user reads output are perfectly normal. Too tight a
+// threshold would mark most sessions that are actually working as "idle", so it is widened to
+// 5 minutes.
 const WORKING_THRESHOLD_MS = 5 * 60 * 1000;
-// 返回的不只是三态本身，还有 agoMs（距上次活跃过了多少毫秒）——working 状态下前端要
-// 拿这个算"心跳有多深"：5 分钟内越新鲜颜色越深、心电图波形摆动越大，快到 5 分钟
-// 边界时逐渐收敛成最浅的红，而不是一到 5 分钟就从"最深红"直接跳成"灰"。
+// Returns not only the three states but also agoMs (milliseconds since last activity). In the
+// working state the frontend uses it to compute "heartbeat depth": the fresher within 5 minutes,
+// the deeper the colour and the larger the ECG swing, fading to the palest red near the
+// 5-minute boundary instead of jumping straight from "deepest red" to "grey" at 5 minutes.
 function vitalStatus(hasLiveProcess, lastTs) {
   if (!hasLiveProcess) return { status: "dead", agoMs: null };
   const agoMs = lastTs ? Date.now() - new Date(lastTs).getTime() : null;
@@ -126,12 +136,13 @@ function vitalStatus(hasLiveProcess, lastTs) {
   return { status: "idle", agoMs };
 }
 
-// PTY 那边记的 cwd 是我们建终端时传给 pty.spawn() 的原始字符串；hook.py 那边记的
-// cwd 是 Python os.getcwd() 的返回值——如果目录路径里带符号链接，两边即使指的是
-//同一个目录，字符串也可能不完全一样（前者不解析符号链接，后者会），导致精确字符串
-// 比较误判为"匹配不到"，从而模型/事件数这些本该有数据的字段全变成空的。用
-// realpath 兜底：能 resolve 就按 resolve 后的比，resolve 不了（目录已经不存在了）
-// 就退回原始字符串比较。
+// The PTY side records cwd as the raw string we passed to pty.spawn() when creating the
+// terminal; the hook.py side records Python's os.getcwd(). If the path contains a symlink, the
+// two strings can differ even for the same directory (the former does not resolve symlinks, the
+// latter does), so an exact string compare wrongly reports "no match" and fields like model /
+// event count that should have data come out empty. realpath is the fallback: compare resolved
+// paths when they resolve, and fall back to the raw strings when they do not (the directory no
+// longer exists).
 function normCwd(p, cache) {
   if (!p) return p;
   if (cache.has(p)) return cache.get(p);
@@ -149,7 +160,7 @@ app.get("/api/sessions", (req, res) => {
   const live = sessions.list();
   const auditRows = audit.listSessions();
   const pendingSessionIds = new Set(approvals.listPending().map((r) => r.session_id));
-  const cwdCache = new Map(); // 一次请求内，同一个路径字符串只 realpath 一次
+  const cwdCache = new Map(); // realpath each path string only once per request
   const enriched = live.map((s) => {
     const sCwd = normCwd(s.cwd, cwdCache);
     const candidates = auditRows.filter((r) => normCwd(r.cwd, cwdCache) === sCwd);
@@ -165,10 +176,12 @@ app.get("/api/sessions", (req, res) => {
       lastTs: match ? match.last_ts : null,
       model: match && match.transcript_path ? transcript.getModel(match.transcript_path) : null,
       status: s.alive ? computeSessionStatus(s, match ? match.session_id : null, match ? match.last_ts : null, pendingSessionIds) : "dead",
-      // 距上次活跃多久——前端的"生命体征"指示器靠它算心跳颜色深浅和波形摆动幅度。
-      // 漏了这个字段的话 vitalHeat() 拿到 undefined 一律返回 0，不管多活跃都画成
-      // 灰色直线（这正是"健康状态没有红色"那个 bug）。两个活跃信号取更近的那个：
-      // PTY 真的吐过字（lastOutputAt），或者这个 cwd 底下有新的审计事件（last_ts）。
+      // Time since last activity: the frontend "vital signs" indicator uses it for heartbeat
+      // colour depth and waveform swing. Without this field vitalHeat() gets undefined and
+      // always returns 0, drawing a grey flat line however active the session is (exactly the
+      // "health status never shows red" bug). Take the more recent of two activity signals:
+      // the PTY really printed something (lastOutputAt), or there is a new audit event under
+      // this cwd (last_ts).
       statusAgoMs: (() => {
         if (!s.alive) return null;
         const outputAt = s.lastOutputAt || 0;
@@ -183,8 +196,8 @@ app.get("/api/sessions", (req, res) => {
 
 app.post("/api/sessions", (req, res) => {
   const { cwd, launchClaude } = req.body || {};
-  // launchClaude 不传就是 true（"新建会话"的默认行为，保持原样）；"新建窗口"
-  // 显式传 false，要一个不自动敲 claude 的裸 shell。
+  // launchClaude defaults to true when omitted (the "new session" default, unchanged); "new
+  // window" passes false explicitly to get a bare shell that does not type claude automatically.
   const session = sessions.create({ cwd, launchClaude: launchClaude !== false });
   res.json({ id: session.id, cwd: session.cwd, createdAt: session.createdAt });
 });
@@ -194,17 +207,18 @@ app.delete("/api/sessions/:id", (req, res) => {
   res.json({ ok });
 });
 
-// ---- REST API: "新建会话"弹窗里选工作目录用的文件夹浏览器 ----
+// ---- REST API: folder browser for picking the working directory in the "new session" dialog ----
 app.get("/api/browse-dir", (req, res) => {
   const result = browse.listDir(req.query.path);
   if (result.error) return res.status(400).json(result);
   res.json(result);
 });
 
-// ---- REST API: 是否允许其它设备访问这个 Web UI ----
-// listeningHost 告诉前端这个进程实际绑定在哪个地址上——如果还是 127.0.0.1，
-// 下面 allowRemote 这个标志位改了也不会真正生效，得管理员显式设 CC_MONITOR_WEBUI_HOST
-// =0.0.0.0 重启进程才行；前端拿这个字段判断要不要提示"这个开关现在还没真正生效"。
+// ---- REST API: whether other devices may access this Web UI ----
+// listeningHost tells the frontend which address this process is actually bound to. If it is
+// still 127.0.0.1, changing the allowRemote flag below has no real effect; the admin must set
+// CC_MONITOR_WEBUI_HOST=0.0.0.0 explicitly and restart the process. The frontend uses this field
+// to decide whether to say "this switch does not take effect yet".
 app.get("/api/remote-access-state", (req, res) => {
   res.json({ ...remoteAccess.getState(), listeningHost: HOST });
 });
@@ -214,8 +228,9 @@ app.post("/api/remote-access-state", (req, res) => {
   res.json({ ...remoteAccess.setState(allowRemote), listeningHost: HOST });
 });
 
-// ---- REST API: 待批准的 confirm 类操作（跟触发它的终端里能直接按 y/N 是同一件事的
-// 另一条路，谁先给出结果就用谁的，见 cc_monitor/notify.py 的 confirm()） ----
+// ---- REST API: confirm-type operations pending approval (another path to the same thing as
+// pressing y/N in the terminal that triggered it; whichever answers first wins, see confirm() in
+// cc_monitor/notify.py) ----
 
 app.get("/api/pending-approvals", (req, res) => {
   res.json(approvals.listPending());
@@ -233,15 +248,16 @@ app.get("/api/approvals/history", (req, res) => {
   res.json(approvals.listHistory(limit));
 });
 
-// ---- REST API: claude 进程运行身份检测（Web UI 和你终端里的 claude 是不是同一个
-// 操作系统用户——不是同一个用户的话，两边各写各的 ~/.cc-monitor/ 数据库，这个接口
-// 就是用来把这种情况暴露出来的） ----
+// ---- REST API: detect which user the claude process runs as (whether the Web UI and the
+// claude in your terminal are the same OS user; if not, each side writes its own ~/.cc-monitor/
+// database, and this endpoint exists to expose that) ----
 
 app.get("/api/claude-processes", async (req, res) => {
   const procs = await processScan.scanClaudeProcesses();
-  // 一个"正在跑"的 claude 进程本身不带时间戳（ps 只有进程启动时间，不是"最后一次
-  // 真的干了点什么"）——按 cwd 比对审计日志里最近一条事件的时间，当作"最近活跃"的
-  // 近似值：进程在跑但迟迟没有新事件，大概率是空闲在等用户输入，不是 bug。
+  // A "running" claude process carries no timestamp of its own (ps only has the process start
+  // time, not "the last time it actually did something"). Use the time of the latest audit log
+  // event for the same cwd as an approximation of "recently active": a process that is running
+  // but has no new events is most likely idle waiting for user input, not a bug.
   const cwdCache = new Map();
   const auditRows = audit.listSessions();
   const lastEventByCwd = new Map();
@@ -251,9 +267,10 @@ app.get("/api/claude-processes", async (req, res) => {
     const prev = lastEventByCwd.get(key);
     if (!prev || r.last_ts > prev) lastEventByCwd.set(key, r.last_ts);
   }
-  // 进程本身不知道自己在用哪个模型——模型只写在 transcript 里。按 cwd 找到该目录下
-  // 最近那个会话，用它的 transcript 解析出模型 ID 和 session id。同一个目录先后开过
-  // 好几个会话时取最近的一个（auditRows 已按 last_ts 倒序）。
+  // The process itself does not know which model it uses; the model is only written in the
+  // transcript. Find the latest session for this cwd and parse the model ID and session id from
+  // its transcript. When a directory had several sessions, take the latest (auditRows is already
+  // sorted by last_ts, newest first).
   const sessionByCwd = new Map();
   for (const r of auditRows) {
     if (!r.cwd) continue;
@@ -263,8 +280,9 @@ app.get("/api/claude-processes", async (req, res) => {
   const enriched = procs.map((p) => {
     const lastEventTs = p.cwd ? lastEventByCwd.get(normCwd(p.cwd, cwdCache)) || null : null;
     const sess = p.cwd ? sessionByCwd.get(normCwd(p.cwd, cwdCache)) : null;
-    // 这里永远不会是 "dead"——能进这个列表就说明进程这一刻真的在跑，vitalStatus() 的
-    // 第一个参数写死 true，只用它来区分 working（最近有审计事件）还是 idle（挂着但没动静）。
+    // Never "dead" here: being in this list means the process really is running right now, so
+    // vitalStatus()'s first argument is hard-coded true and only separates working (recent audit
+    // events) from idle (alive but quiet).
     const v = vitalStatus(true, lastEventTs);
     return {
       ...p,
@@ -279,11 +297,13 @@ app.get("/api/claude-processes", async (req, res) => {
   res.json(processScan.summarize(enriched, os.userInfo().username));
 });
 
-// ---- REST API: Claude Code 网络流量（数据来自系统层探针，Linux + eBPF 才有；
-// 没装/没在跑探针的话这几个接口如实返回空数据，不是 bug） ----
+// ---- REST API: Claude Code network traffic (data comes from the system-layer probe, Linux +
+// eBPF only; without the probe installed or running these endpoints honestly return empty data,
+// not a bug) ----
 
-// 归属地城市/国家名要跟着页面语言走（MaxMind GeoLite2 的 names 字段本身就是多语言
-// 对象），前端把当前 UI 语言（"zh"/"en"）通过 ?lang= 传过来，不认的值一律按 en 处理。
+// Location city/country names follow the page language (the names field in MaxMind GeoLite2 is
+// itself a multilingual object). The frontend passes the current UI language ("zh"/"en") via
+// ?lang=; any other value is treated as en.
 function geoLang(req) {
   return req.query.lang === "zh" ? "zh" : "en";
 }
@@ -308,7 +328,7 @@ app.get("/api/geoip-status", async (req, res) => {
   res.json(await geoip.getStatus());
 });
 
-// ---- REST API: 审计日志 ----
+// ---- REST API: audit log ----
 
 app.get("/api/log-sessions", (req, res) => {
   const rows = audit.listSessions().map((r) => ({
@@ -319,15 +339,16 @@ app.get("/api/log-sessions", (req, res) => {
   res.json(rows);
 });
 
-// 时间线视图：一次请求 = 最近 lanes 个会话 × 最近 range_minutes 分钟内的操作，
-// 每个会话一条泳道，按时间分桶聚合成"这个桶里有几条、风险构成、有没有被拦截"，
-// 前端拿去画 session-timeline.js 那张画布。分桶大小按窗口长短固定几档（1h/6h/24h/7d），
-// 不做成用户自由输入，避免桶数过多/过少画出没法看的图。
+// Timeline view: one request = the latest `lanes` sessions x operations in the last
+// range_minutes minutes, one lane per session, aggregated into time buckets ("how many in this
+// bucket, risk mix, anything blocked"), which the frontend draws on the session-timeline.js
+// canvas. Bucket size comes from a few fixed tiers by window length (1h/6h/24h/7d), not free user
+// input, to avoid too many or too few buckets producing an unreadable chart.
 function bucketSizeFor(rangeMinutes) {
-  if (rangeMinutes <= 60) return 60 * 1000; // 1 分钟
-  if (rangeMinutes <= 6 * 60) return 5 * 60 * 1000; // 5 分钟
-  if (rangeMinutes <= 24 * 60) return 15 * 60 * 1000; // 15 分钟
-  return 2 * 60 * 60 * 1000; // 2 小时
+  if (rangeMinutes <= 60) return 60 * 1000; // 1 minute
+  if (rangeMinutes <= 6 * 60) return 5 * 60 * 1000; // 5 minutes
+  if (rangeMinutes <= 24 * 60) return 15 * 60 * 1000; // 15 minutes
+  return 2 * 60 * 60 * 1000; // 2 hours
 }
 
 app.get("/api/timeline", (req, res) => {
@@ -340,9 +361,10 @@ app.get("/api/timeline", (req, res) => {
   const sessionIds = sessions.map((s) => s.session_id);
   const rows = audit.timelineEvents({ sessionIds });
 
-  // 按 session 分组，同时记录是否命中了 perSessionLimit（说明这个会话更早的事件
-  // 被截断了，没有真的都拉出来分桶）——目前 perSessionLimit 用的是 timelineEvents()
-  // 的默认值 800，这里只需要知道"这个会话本条查询返回了多少行"来判断。
+  // Group by session, and record whether perSessionLimit was hit (meaning older events of this
+  // session were truncated and not all pulled into buckets). perSessionLimit currently uses
+  // timelineEvents()'s default of 800; here we only need "how many rows this query returned for
+  // the session" to tell.
   const perSession = new Map(sessionIds.map((id) => [id, []]));
   for (const r of rows) {
     const ms = new Date(r.ts).getTime();
@@ -383,7 +405,7 @@ app.get("/api/timeline", (req, res) => {
   res.json({ rangeMinutes, bucketMs, now: Date.now(), lanes });
 });
 
-// 单个会话的操作流程图：按用户提问分轮，每轮是配对好前后事件、判定了成败的操作节点。
+// Operation flow chart for one session: split into turns by user prompt; each turn holds operation nodes with paired before/after events and a success/failure verdict.
 const SESSION_FLOW_LIMIT = 3000;
 app.get("/api/session-flow", (req, res) => {
   const sessionId = req.query.session_id;
@@ -401,30 +423,32 @@ app.get("/api/session-flow", (req, res) => {
   });
 });
 
-// ---- REST API: Claude Tap（发给/收到模型的完整对话内容） ----
+// ---- REST API: Claude Tap (the full conversation sent to / received from the model) ----
 
 app.get("/api/transcript", (req, res) => {
   const sessionId = req.query.session_id;
-  if (!sessionId) return res.status(400).json({ error: "缺少 session_id" });
+  if (!sessionId) return res.status(400).json({ error: "Missing session_id" });
 
   const transcriptPath = audit.getTranscriptPath(sessionId);
   if (!transcriptPath) {
     return res.json({ entries: [], nextLine: 0, transcriptPath: null, totalLines: 0 });
   }
-  // hook payload 里的 transcript_path 是 Claude Code 自己上报的"它打算/正在写到哪个文件"，
-  // 不代表这个文件一定真的存在——有些执行上下文（比如某些一次性的工具调用、后台任务）
-  // 压根没有落盘常规的 project transcript。这种情况要明确告诉前端"文件不存在"，
-  // 不然前端会一直显示"0 · 那个路径"、卡在"加载中"，看起来像是卡死了，其实是没有数据源。
+  // transcript_path in the hook payload is what Claude Code reports as "the file it intends to /
+  // is writing to"; that does not mean the file exists. Some execution contexts (some one-off
+  // tool calls, background tasks) never write a normal project transcript to disk. In that case
+  // tell the frontend clearly that "the file does not exist"; otherwise it keeps showing
+  // "0 · that path" stuck on "Loading", which looks frozen when there is simply no data source.
   if (!fs.existsSync(transcriptPath)) {
     return res.json({ entries: [], nextLine: 0, transcriptPath, totalLines: 0, missing: true });
   }
 
   const sinceLineRaw = req.query.since_line;
   const limit = Math.min(parseInt(req.query.limit || "300", 10), 2000);
-  // since_line 没传或是 0，代表这是刚选中这个会话的第一次拉取——给"最近在做什么"
-  // （从文件尾部往前找），不是从第一行开始翻旧账，不然几万行的长会话看到的全是好几天前
-  // 的历史消息，跟"实时"完全不沾边。后续轮询用的 since_line 都是上次返回的 nextLine
-  // （必然 > 0），走正常的增量正向读取。
+  // since_line missing or 0 means this is the first fetch after selecting the session: return
+  // "what it has been doing recently" (searching back from the end of the file), not page through
+  // from line 1, or a long session of tens of thousands of lines would show only messages from
+  // days ago, nothing like "live". Later polls pass the previous nextLine as since_line (always
+  // > 0) and take the normal incremental forward read.
   const { entries, nextLine } =
     !sinceLineRaw || sinceLineRaw === "0"
       ? transcript.readTailEntries(transcriptPath, limit)
@@ -437,10 +461,11 @@ app.get("/api/transcript", (req, res) => {
   });
 });
 
-// Claude Tap"全部会话"合并视图：每个有 transcript 的 session 各取最近若干条，
-// 按时间戳合并排序、打上是哪个 session 的标签。不做增量轮询游标（每次都是重新读一遍
-// 每个 session 的尾部）——session 数量对个人监测工具来说通常是个位数到十几个，
-// 简单直接比维护一套多文件的增量游标划算得多。
+// Claude Tap "all sessions" merged view: take the latest few entries from each session that has a
+// transcript, merge-sort by timestamp and tag each with its session. No incremental polling
+// cursor (each call re-reads the tail of every session): for a personal monitoring tool the
+// session count is usually single digits to a dozen or so, so keeping it simple beats
+// maintaining a multi-file incremental cursor.
 app.get("/api/transcript/all", (req, res) => {
   const perSessionLimit = Math.min(parseInt(req.query.per_session_limit || "30", 10), 200);
   const overallLimit = Math.min(parseInt(req.query.limit || "200", 10), 1000);
@@ -460,15 +485,15 @@ app.get("/api/transcript/all", (req, res) => {
       });
     }
   }
-  merged.sort((a, b) => (a.ts < b.ts ? 1 : -1)); // 新的在前，跟单会话视图的顺序一致
+  merged.sort((a, b) => (a.ts < b.ts ? 1 : -1)); // newest first, same order as the single-session view
   merged = merged.slice(0, overallLimit);
   res.json({ entries: merged, sessionCount: sessions.length });
 });
 
-// ---- REST API: 账号级用量/额度（跟 ccstatusline 读同一份 Claude Code OAuth 凭证） ----
+// ---- REST API: account-level usage/quota (reads the same Claude Code OAuth credentials as ccstatusline) ----
 
-// 规则元信息：id -> {title, desc, title_en, desc_en, risk, action}，审批台用来把规则 id
-// 翻译成"这是要确认什么操作"的通俗说明。
+// Rule metadata: id -> {title, desc, title_en, desc_en, risk, action}. AI Approvals uses it to turn
+// a rule id into a plain explanation of "what operation this asks you to confirm".
 app.get("/api/rules/meta", (req, res) => {
   res.json(rulesMeta.ruleMeta());
 });
@@ -517,10 +542,11 @@ app.get("/api/stats", (req, res) => {
   res.json(audit.stats());
 });
 
-// ---- REST API: 首页概览 + 状态信息面板 ----
+// ---- REST API: Home overview + Status panel ----
 
-// GitHub/SSH/下载/Docker/压缩/网络诊断/进程管理这七组首页卡片现在只显示一个汇总
-// 数字（点开才看分类明细），汇总数字就是分类小计表 n 字段加总。
+// The seven Home card groups GitHub/SSH/download/Docker/archive/network diagnostics/process
+// management now show only a total (the category breakdown appears when opened); the total is
+// the sum of the n field in the category subtotal table.
 function sumN(rows) {
   return rows.reduce((a, r) => a + r.n, 0);
 }
@@ -558,14 +584,16 @@ app.get("/api/overview", async (req, res) => {
   });
 });
 
-// ---- REST API: 首页统计卡片的下钻详情 ----
+// ---- REST API: drill-down details for the Home stat cards ----
 
 app.get("/api/drilldown/sessions", async (req, res) => {
-  // "活跃/停止"跟 Web UI 终端会话那边的"working/idle"不是一回事——这里的会话大多是
-  // 在外部终端里跑的、被 hooks 被动监测到的，工具调用之间隔几分钟很正常，不能用
-  // "最近几十秒有没有动静"判断。真正靠谱的信号是"这个 cwd 底下还有没有一个真的在跑的
-  // claude 进程"，用跟"检测到的 claude 进程"卡片同一份实时 ps 扫描结果按 cwd 比对
-  // （复用 normCwd 的 realpath 归一化，避免符号链接导致误判成"没匹配上"）。
+  // "active/stopped" here is not the same as "working/idle" for Web UI terminal sessions. Most
+  // sessions here run in external terminals and are monitored passively through hooks; gaps of a
+  // few minutes between tool calls are normal, so "any activity in the last few tens of seconds"
+  // cannot decide it. The reliable signal is "is there still a claude process really running
+  // under this cwd", matched by cwd against the same live ps scan as the "detected claude
+  // processes" card (reusing normCwd's realpath normalisation so a symlink does not cause a false
+  // "no match").
   const cwdCache = new Map();
   const liveProcs = await processScan.scanClaudeProcesses();
   const liveCwds = new Set(liveProcs.map((p) => normCwd(p.cwd, cwdCache)).filter(Boolean));
@@ -578,8 +606,9 @@ app.get("/api/drilldown/sessions", async (req, res) => {
     blockedCount: r.blocked_count,
     bypassCount: r.bypass_count,
     model: r.transcript_path ? transcript.getModel(r.transcript_path) : null,
-    // 模型的输入/输出/缓存 token 用量——从这个会话的 transcript 里算（跟"状态信息"页
-    // 那张模型用量表同一个 getTokenStats），会话列表里直接能看到每个会话烧了多少。
+    // Model input/output/cache token usage, computed from this session's transcript (the same
+    // getTokenStats as the model usage table on the Status page), so the session list shows how
+    // much each session has burned.
     tokenStats: r.transcript_path ? transcript.getTokenStats(r.transcript_path) : null,
     active: r.cwd ? liveCwds.has(normCwd(r.cwd, cwdCache)) : false,
     ...(() => {
@@ -620,7 +649,7 @@ app.get("/api/drilldown/blocked", (req, res) => {
 app.get("/api/drilldown/file-op/:type", (req, res) => {
   const type = req.params.type;
   if (!["read", "write", "edit", "delete"].includes(type)) {
-    return res.status(400).json({ error: "type 必须是 read/write/edit/delete 之一" });
+    return res.status(400).json({ error: "type must be one of read/write/edit/delete" });
   }
   const rows = audit.fileOpDetails(type).map((row) => {
     let detail = {};
@@ -644,9 +673,10 @@ app.get("/api/drilldown/file-op/:type", (req, res) => {
   res.json(rows);
 });
 
-// GitHub/SSH/下载/Docker/压缩/网络诊断/进程管理这七组，首页现在都是"一张汇总卡片，
-// 点开看分类小计 + 事件明细"，接口形状也完全一样（跟 mcp-calls/skill-calls 那几个
-// 已有接口是同一个套路），抽成一个通用处理函数。
+// GitHub/SSH/download/Docker/archive/network diagnostics/process management: these seven groups
+// are all "one summary card on Home; open it for category subtotals + event details", and the
+// endpoint shape is identical too (the same pattern as the existing mcp-calls/skill-calls
+// endpoints), so they share one generic handler.
 function opsDrilldownHandler(breakdownFn, eventsFn, describeOpts = {}) {
   return (req, res) => {
     const breakdown = breakdownFn();
@@ -677,9 +707,10 @@ function opsDrilldownHandler(breakdownFn, eventsFn, describeOpts = {}) {
 app.get("/api/drilldown/github-ops", opsDrilldownHandler(audit.githubOpsBreakdown, audit.githubOpsEvents));
 app.get("/api/drilldown/ssh-ops", opsDrilldownHandler(audit.sshOpsBreakdown, audit.sshOpsEvents));
 app.get("/api/drilldown/download-ops", opsDrilldownHandler(audit.downloadOpsBreakdown, audit.downloadOpsEvents));
-// 文件发送操作单独传 { boldFiles: true }——下钻列表里希望一眼看出发的是哪个文件，
-// 命令文本里长得像文件名的参数、Artifact 事件的 file_path 都加粗高亮；其它分组卡片
-// （SSH/下载/Docker 等）不需要这个视觉强调，保持默认不传。
+// File-send operations pass { boldFiles: true }: in the drill-down list you want to see at a
+// glance which file was sent, so arguments that look like file names in the command text and
+// the file_path of Artifact events are bolded. The other group cards (SSH/download/Docker etc.)
+// do not need this emphasis and leave it unset.
 app.get("/api/drilldown/file-send-ops", opsDrilldownHandler(audit.fileSendOpsBreakdown, audit.fileSendOpsEvents, { boldFiles: true }));
 app.get("/api/drilldown/docker-ops", opsDrilldownHandler(audit.dockerOpsBreakdown, audit.dockerOpsEvents));
 app.get("/api/drilldown/archive-ops", opsDrilldownHandler(audit.archiveOpsBreakdown, audit.archiveOpsEvents));
@@ -693,10 +724,10 @@ app.get("/api/drilldown/workdir-escape", opsDrilldownHandler(audit.workdirEscape
 
 app.get("/api/drilldown/install-op/:type", (req, res) => {
   const type = req.params.type;
-  // 合法取值直接问 audit 那边的分组表，避免这里跟分组定义各维护一份、加组时漏改。
+  // Ask audit's group table for the valid values, so the group definition is not kept in two places and a new group is not missed here.
   const validTypes = audit.installGroupNames();
   if (!validTypes.includes(type)) {
-    return res.status(400).json({ error: `type 必须是 ${validTypes.join("/")} 之一` });
+    return res.status(400).json({ error: `type must be one of ${validTypes.join("/")}` });
   }
   const rows = audit.installDetails(type).map((row) => {
     let detail = {};
@@ -728,9 +759,10 @@ app.get("/api/drilldown/screenshot", (req, res) => {
     } catch (e) {
       detail = {};
     }
-    // 只给"基本信息"：命令原文/文件路径这类 fmt.describe() 已经在算的摘要文本，
-    // 不读取、不 serve 截图文件本身的图像内容——截图很可能带敏感桌面信息，用户
-    // 明确要求详情页只展示路径和基本信息，不展示图内容。
+    // "Basic info" only: summary text that fmt.describe() already computes, such as the command
+    // text or file path. The screenshot file's image content is not read or served: screenshots
+    // may well contain sensitive desktop information, and the user explicitly asked for the
+    // details page to show only the path and basic info, not the image.
     const { label, summaryHtml } = fmt.describe(row.tool_name, "hook_pre", detail);
     return {
       id: row.id,
@@ -744,8 +776,9 @@ app.get("/api/drilldown/screenshot", (req, res) => {
       summaryHtml,
     };
   });
-  // 带上按方式分类的小计：真截屏（截图工具 / headless 浏览器 / MCP 动作）跟"只是打开
-  // 了一张图片"必须分得开，否则整卡数字几乎全是后者，看不出前者有没有被检测到。
+  // Include subtotals by method: real screen captures (screenshot tool / headless browser / MCP
+  // action) must be kept apart from "just opened an image file", otherwise the card total is
+  // almost all the latter and you cannot tell whether the former was detected at all.
   res.json({ breakdown: audit.screenshotBreakdown(), events: rows });
 });
 
@@ -777,7 +810,7 @@ app.get("/api/drilldown/ai-trajectory-events", (req, res) => {
   res.json(audit.networkConnectEvents());
 });
 
-// ---- REST API: 数据归档（把当前事件数据存档）/ 清空当前事件数据 / 历史归档列表 ----
+// ---- REST API: archive data (archive the current event data) / clear current event data / archive history list ----
 
 app.get("/api/archives", (req, res) => {
   res.json(archives.listArchives());
@@ -796,13 +829,13 @@ app.delete("/api/archives/:id", (req, res) => {
   res.json(result);
 });
 
-// 打开一份历史归档具体看里面的事件——跟 /api/logs 返回的事件形状完全一样，
-// 前端可以直接复用同一套 renderLogItem() 渲染逻辑，不用另外写一套。
+// Open one history archive and view its events. Same event shape as /api/logs, so the frontend
+// can reuse the same renderLogItem() rendering logic instead of writing another one.
 app.get("/api/archives/:id/events", (req, res) => {
   const sinceId = parseInt(req.query.since_id || "0", 10);
   const limit = Math.min(parseInt(req.query.limit || "500", 10), 2000);
   const rows = archives.getArchiveEvents(req.params.id, { sinceId, limit });
-  if (rows === null) return res.status(404).json({ error: "归档不存在或对应的文件已丢失" });
+  if (rows === null) return res.status(404).json({ error: "Archive not found or its file is missing" });
   const events = rows.map((row) => {
     let detail = {};
     try {
@@ -835,13 +868,15 @@ app.post("/api/events/clear", (req, res) => {
   res.json(result);
 });
 
-// ---- REST API: 首页"同步更新"按钮——在项目源码目录里跑 git pull，把 GitHub 上的新
-// 代码/新规则同步下来。固定跑 `git pull`，不接受任何请求参数拼进命令行（execFile 不
-// 经过 shell，参数是固定数组，没有注入空间）。只是把 git 自己的输出原样返回给前端，
-// 不做任何"自动解决冲突"之类的动作——本地有冲突的话 git pull 自己就会失败并说明原因，
-// 工作区不会被这个按钮静默改动/丢弃任何东西。拉下来的是源码文件，不会自动重启
-// Node 进程/重新执行 Python hook 里已经 import 过的模块，所以前端要提示"可能需要
-// 重启 Web UI 才会用上新代码"。
+// ---- REST API: the Home "Sync update" button runs git pull in the project source directory to
+// bring down new code and rules from GitHub. It always runs plain `git pull` and never splices
+// request parameters into the command line (execFile skips the shell and the arguments are a
+// fixed array, so there is no room for injection). git's own output is returned to the frontend
+// as is, with no "auto-resolve conflicts" or similar: if there is a local conflict git pull fails
+// by itself and says why, and this button never silently changes or discards anything in the
+// working tree. What comes down is source files; the Node process does not restart and Python
+// modules already imported by the hook are not re-run, so the frontend should say "you may need
+// to restart the Web UI to use the new code".
 const REPO_ROOT = path.join(__dirname, "..");
 app.post("/api/sync-update", (req, res) => {
   execFile("git", ["pull"], { cwd: REPO_ROOT, timeout: 60_000 }, (err, stdout, stderr) => {
@@ -854,7 +889,7 @@ app.post("/api/sync-update", (req, res) => {
   });
 });
 
-// ---- REST API: 审计开关（开始/暂停/停止）----
+// ---- REST API: audit switch (start / pause / stop) ----
 
 app.get("/api/audit-state", (req, res) => {
   res.json(auditState.getState());
@@ -917,9 +952,9 @@ app.get("/api/status", async (req, res) => {
   res.json({ liveSessions, auditSessions });
 });
 
-// 不同模型的使用情况统计——把每个 session 的 transcript 已经按模型分好组的
-// token 用量（见 transcript.js 的 getTokenStats().byModel）汇总到一起，
-// 不是重新扫一遍文件，是复用 /api/status 已经在算的同一份数据。
+// Usage statistics per model: sums the token usage that each session's transcript already
+// groups by model (see getTokenStats().byModel in transcript.js). It does not rescan files; it
+// reuses the same data /api/status already computes.
 app.get("/api/model-usage", (req, res) => {
   const rows = audit.listSessions(200);
   const totals = {};
@@ -951,9 +986,10 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ noServer: true });
 
 server.on("upgrade", (req, socket, head) => {
-  // WebSocket 的 upgrade 走的是 http.Server 原生事件，不经过 Express 中间件链，
-  // 上面那道 app.use 闸门管不到这里——这条终端 PTY 通道恰恰是风险最高的一个
-  // （直接就是个 shell），必须单独在这里也拦一遍，不能只挡 HTTP 路由。
+  // The WebSocket upgrade is a native http.Server event that bypasses the Express middleware
+  // chain, so the app.use gate above does not cover it. This terminal PTY channel is precisely the
+  // riskiest one (it is a shell), so it must be checked separately here too, not only the HTTP
+  // routes.
   const addr = socket.remoteAddress;
   if (!remoteAccess.isLocalAddress(addr) && !remoteAccess.getState().allowRemote) {
     socket.destroy();
@@ -973,13 +1009,13 @@ server.on("upgrade", (req, socket, head) => {
 wss.on("connection", (ws) => {
   const session = sessions.get(ws.sessionId);
   if (!session) {
-    ws.send(JSON.stringify({ type: "error", message: "会话不存在或已结束" }));
+    ws.send(JSON.stringify({ type: "error", message: "Session not found or already ended" }));
     ws.close();
     return;
   }
 
   session.clients.add(ws);
-  // 把已有的 scrollback 一次性回放给刚连上的客户端。
+  // Replay the existing scrollback to the newly connected client in one go.
   if (session.scrollback.length) {
     ws.send(JSON.stringify({ type: "data", data: session.scrollback.join("") }));
   }
@@ -1004,21 +1040,23 @@ wss.on("connection", (ws) => {
 });
 
 server.listen(PORT, HOST, () => {
-  const accessNote = HOST === "127.0.0.1" ? "（仅本机可访问）" : `（已绑定 ${HOST}，"允许远程访问"开关的实际状态见首页）`;
-  console.log(`[CC-Monitor WebUI] 监听 http://${HOST}:${PORT} ${accessNote}`);
-  console.log(`[CC-Monitor WebUI] 审计日志读取自: ${audit.dbPath()}`);
-  // cc_monitor 那边的 hook（Python）跟这个 Web UI 进程各自独立算自己的 ~/.cc-monitor/
-  // 目录——都是当前进程的操作系统用户的 home，不是同一个配置项。如果 Web UI 用
-  // root/sudo 启动，但你平时在终端里跑 claude 用的是自己的普通账号，两边写的完全
-  // 是两个不相干的 SQLite 文件：终端里的确认框、审计事件，"待批准"页面永远看不到。
-  // 这里把当前用户名打出来，不对的话一眼就能看出来，不用等排查半天才发现。
+  const accessNote = HOST === "127.0.0.1" ? "(local access only)" : `(bound to ${HOST}; see Home for the actual state of the "Allow remote access" switch)`;
+  console.log(`[CC-Monitor WebUI] Listening on http://${HOST}:${PORT} ${accessNote}`);
+  console.log(`[CC-Monitor WebUI] Reading the audit log from: ${audit.dbPath()}`);
+  // The cc_monitor hook (Python) and this Web UI process each work out their own ~/.cc-monitor/
+  // directory independently: both use the home of the OS user running the current process, not a
+  // shared setting. If the Web UI is started as root/sudo but you normally run claude in the
+  // terminal as your own account, the two sides write two unrelated SQLite files: confirmation
+  // prompts and audit events from the terminal never show up on the pending approval page.
+  // Printing the current user name here makes a mismatch obvious at a glance, instead of after
+  // a long investigation.
   try {
     const user = os.userInfo().username;
     console.log(
-      `[CC-Monitor WebUI] 当前运行用户: ${user}（提醒：必须跟你平时跑 claude 的那个终端是同一个操作系统用户，` +
-        `不然两边各写各的 ~/.cc-monitor/ 数据库，互相看不到彼此——不要用 sudo/root 启动这个服务，除非你的 claude 也是用 root 跑的）`
+      `[CC-Monitor WebUI] Running as user: ${user} (reminder: this must be the same OS user as the terminal where you normally run claude, ` +
+        `otherwise each side writes its own ~/.cc-monitor/ database and neither sees the other. Do not start this service with sudo/root unless your claude also runs as root)`
     );
   } catch (e) {
-    // os.userInfo() 在极少数环境下可能拿不到（比如缺 uid/gid 映射），拿不到就算了，不影响功能
+    // os.userInfo() can fail in rare environments (e.g. missing uid/gid mapping); if so, skip it, nothing else depends on it
   }
 });
