@@ -1,22 +1,28 @@
-"""介入级别开关：拦截 / 观察 / 关闭。
+"""Intervention level switch: Enforcing / Permissive (observe only) / Off.
 
-存一个小状态文件（不用数据库，读写都是原子的单文件操作，hook 每次调用都要读一遍，
-开销要尽量小）。三种级别的语义不一样，不是简单的"开/关"两态：
+Stored in a small state file (no database; reads and writes are atomic single-file operations,
+and the hook reads it on every call, so it must stay cheap). The three levels mean different
+things; this is not a simple on/off switch:
 
-- running（默认）：完全正常——按规则判定放行/拦截/确认，全部记录。
-- paused / permissive：观察模式，只记录不拦截——仍然按规则跑一遍算出 risk/matched_rule
-  记下来，但从不真的拦截或弹确认框，一律放行。适合"我知道接下来这批操作有点危险，但不
-  想被打断，等下再看记录"，也适合长期挂着先摸清楚 AI 到底在干什么再决定拦什么。
-  命名参考 SELinux 的 permissive / AppArmor 的 complain：判定照跑、违规照记，只是不阻止。
-- stopped：完全不介入——不判定、不记录，等价于没装这个 hook。适合排查"是不是 CC-Monitor
-  自己导致了某个问题"，或者单纯不想留任何记录。
+- running (default): fully normal. Rules decide allow/block/confirm and everything is recorded.
+- paused / permissive: observe only, record without blocking. Rules still run and the computed
+  risk/matched_rule is recorded, but nothing is ever actually blocked and no confirmation prompt is
+  shown; everything is allowed. Useful for "I know the next batch of operations is somewhat risky,
+  but I do not want to be interrupted; I will read the log later", or to leave on for a long time
+  to learn what the AI actually does before deciding what to block.
+  Named after SELinux's permissive / AppArmor's complain mode: evaluation runs and violations are
+  recorded, only nothing is prevented.
+- stopped: no intervention at all. No evaluation, no recording; same as not having the hook
+  installed. Useful for checking whether CC-Monitor itself causes a problem, or for simply not
+  keeping any record.
 
-注意"审计"这个词只有 stopped 那一档才真的停掉；running 和 permissive 两档审计都照常在跑，
-所以对外文案一律说"介入级别 / 观察模式"，不说"暂停审计"。
+Note that auditing only really stops at the stopped level; in running and permissive auditing
+keeps going. So user-facing text always says "intervention level / Permissive (observe only)",
+never "audit paused".
 
-磁盘上存的仍然是 running/paused/stopped 三个值——permissive 是 paused 的别名，入口处
-归一化掉，这样老版本的 CC-Monitor、以及任何直接读这个文件或调 /api/audit-state 的脚本
-都不会因为改名而失效。
+On disk the values are still running/paused/stopped. permissive is an alias of paused and is
+normalised on input, so older CC-Monitor versions and any script that reads this file directly or
+calls /api/audit-state keep working after the rename.
 """
 import json
 import os
@@ -26,11 +32,11 @@ from pathlib import Path
 CONFIG_DIR = Path(os.environ.get("CC_MONITOR_HOME", str(Path.home() / ".cc-monitor")))
 STATE_FILE = CONFIG_DIR / "audit_state.json"
 
-# 落盘用的规范值，不要改——外部脚本和老版本都按这三个值读。
+# Canonical values written to disk. Do not change them: external scripts and older versions read these three values.
 VALID_STATES = ("running", "paused", "stopped")
 
-# 对外可以接受的别名 -> 规范值。permissive/observe 说的都是 paused 这一档，
-# enforcing 说的是 running，disabled/off 说的是 stopped。
+# Accepted aliases -> canonical value. permissive/observe both mean the paused level,
+# enforcing means running, disabled/off mean stopped.
 STATE_ALIASES = {
     "permissive": "paused",
     "observe": "paused",
@@ -44,7 +50,7 @@ STATE_ALIASES = {
 
 
 def normalize_state(state):
-    """把别名折算成落盘用的规范值；已经是规范值就原样返回，都不认返回 None。"""
+    """Map an alias to its canonical on-disk value. Canonical values are returned unchanged; anything unrecognised returns None."""
     if not isinstance(state, str):
         return None
     s = state.strip().lower()
@@ -78,7 +84,7 @@ def set_state(state):
     canonical = normalize_state(state)
     if canonical is None:
         raise ValueError(
-            "state 必须是 {} 之一（也接受别名 {}）".format(VALID_STATES, tuple(STATE_ALIASES))
+            "state must be one of {} (aliases {} are also accepted)".format(VALID_STATES, tuple(STATE_ALIASES))
         )
     state = canonical
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)

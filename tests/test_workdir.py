@@ -1,8 +1,9 @@
-"""跨工作目录行为检测（cc_monitor/workdir.py + match="workdir" 规则）的回归测试。
+"""Regression tests for cross-workdir behaviour detection (cc_monitor/workdir.py + match="workdir" rules).
 
-直接跑：python3 -m unittest tests/test_workdir.py
-HOME 固定成一个不存在的假家目录，路径判定不依赖跑测试这台机器上真实的目录结构；
-CC_MONITOR_HOME 隔离，不碰 ~/.cc-monitor。
+Run directly: python3 -m unittest tests/test_workdir.py
+HOME is pinned to a fake home directory that does not exist, so path classification does not depend
+on the real directory layout of the machine running the tests; CC_MONITOR_HOME is isolated and
+~/.cc-monitor is never touched.
 """
 import os
 import sys
@@ -34,7 +35,7 @@ class ClassifyTest(unittest.TestCase):
         cases = {
             "/home/alice/proj/src/a.py": None,
             "/home/alice/proj": None,
-            "/home/alice/projects": workdir.TIER_OTHER,  # 同前缀但不是子目录
+            "/home/alice/projects": workdir.TIER_OTHER,  # same prefix but not a subdirectory
             "/home/alice/.ssh/id_rsa": workdir.TIER_HOME_DOTFILE,
             "/home/alice/.config/gh/hosts.yml": workdir.TIER_HOME_DOTFILE,
             "/home/alice/other/x.py": workdir.TIER_OTHER,
@@ -55,8 +56,9 @@ class ClassifyTest(unittest.TestCase):
             self.assertEqual(workdir.classify(path, CWD, ignored_roots=workdir.DEFAULT_IGNORE), expected, path)
 
     def test_root_running_claude_in_user_home(self):
-        # claude 用 root 跑（HOME=/root），项目在 /home/alice 下：/home/alice 是这个会话的
-        # "自己家"，旁边的项目是 otherProject、隐藏文件是 homeDotfile，不是"别的用户"。
+        # claude runs as root (HOME=/root) with the project under /home/alice: /home/alice is this
+        # session's "own home", so a sibling project is otherProject and a dotfile is homeDotfile,
+        # not "another user's home directory".
         os.environ["HOME"] = "/root"
         try:
             self.assertEqual(workdir.classify("/home/alice/other/x.py", CWD, ignored_roots=()), workdir.TIER_OTHER)
@@ -88,16 +90,16 @@ class BashTest(unittest.TestCase):
         "ls src/ && cat README.md",
         "git status && git diff HEAD~1 -- src/a.py",
         "python3 -m pytest tests/ -k foo",
-        "/usr/bin/python3 script.py --out=/tmp/x.json",  # 系统里的解释器 + 临时目录
+        "/usr/bin/python3 script.py --out=/tmp/x.json",  # system interpreter + temp directory
         "curl https://example.com/a/b -o out.txt",
         'grep -rn "port install" docs/ | head',
-        "python3 -c \"print('/etc/hostname')\"",  # 字符串里的路径不是在访问
+        "python3 -c \"print('/etc/hostname')\"",  # a path inside a string is not an access
         "ls 2>/dev/null; echo ok",
-        "cat <<EOF > notes.txt\n/etc/hosts\n~/.ssh/id_rsa\nEOF",  # heredoc 正文不算
+        "cat <<EOF > notes.txt\n/etc/hosts\n~/.ssh/id_rsa\nEOF",  # heredoc body does not count
         "sed 's/a/b/' src/x.txt",
         "echo $FOO/bar",
-        "cd src && ls ../tests",  # 在项目里转
-        'echo "##### /service 与 /etc/sv 的关系"; ls -la service/drmlog | head -2',  # 引号里带空格的字符串不是路径
+        "cd src && ls ../tests",  # moving around inside the project
+        'echo "##### how /service relates to /etc/sv"; ls -la service/drmlog | head -2',  # a quoted string with spaces is not a path
         "SP=/tmp/scratch; ./scripts/run.sh > $SP/out.txt 2>&1 <<'EOF'\ncat /var/log/x\nEOF",
     ]
 
@@ -106,24 +108,24 @@ class BashTest(unittest.TestCase):
             self.assertEqual(hits("Bash", command=cmd), [], cmd)
 
     def test_quiet_reads_in_readonly_system_dirs(self):
-        # 只读系统目录里的读不报（跑程序/查库/看头文件），写照样报
+        # reads in read-only system directories are not reported (running programs, using libraries, reading headers); writes still are
         for cmd in ["ls /usr/lib/x86_64-linux-gnu | grep libxcb", "cat /usr/include/xcb/xcb.h", "ls /opt/idapro/idalib",
                     "readlink -f /usr/lib/x86_64-linux-gnu/dri/virtio_gpu_dri.so", "ls ~/.cache/puppeteer", "file /bin/ls"]:
             self.assertEqual(hits("Bash", command=cmd), [], cmd)
         self.assertEqual(hits("Bash", command="cp x.so /usr/lib/x86_64-linux-gnu/x.so"), [("/usr/lib/x86_64-linux-gnu/x.so", "system", "write")])
         self.assertEqual(hits("Bash", command="echo x > ~/.cache/foo"), [("/home/alice/.cache/foo", "homeDotfile", "write")])
-        # /etc、/proc、/var 这些放配置/状态的地方，读还是要报
+        # reads in places that hold config/state, such as /etc, /proc and /var, are still reported
         self.assertEqual(hits("Bash", command="cat /etc/hosts"), [("/etc/hosts", "system", "read")])
         self.assertEqual(hits("Bash", command="cat /proc/cpuinfo"), [("/proc/cpuinfo", "system", "read")])
 
     def test_claude_own_state_ignored(self):
         self.assertEqual(hits("Read", file_path="/home/alice/.claude/projects/-x/memory/MEMORY.md"), [])
         self.assertEqual(hits("Write", file_path="/home/alice/.claude/projects/-x/memory/note.md", content="x"), [])
-        # 但 ~/.claude 下别的东西（settings/凭证）照常报
+        # but other things under ~/.claude (settings/credentials) are still reported
         self.assertEqual(hits("Read", file_path="/home/alice/.claude/settings.json"), [("/home/alice/.claude/settings.json", "homeDotfile", "read")])
 
     def test_symlink_created_in_ignored_dir_is_not_followed(self):
-        # ln 的目标（链接本身）在 /tmp 里：按字面路径判定为忽略，不能 realpath 到它指向的 /usr/lib
+        # the ln target (the link itself) is in /tmp: classified as ignored by its literal path; it must not be realpath-resolved to the /usr/lib it points to
         self.assertEqual(hits("Bash", command="ln -sf /usr/lib/libxcb.so.0 /tmp/build/usr/lib/libxcb.so"), [])
         self.assertEqual(hits("Bash", command="cd /tmp/build && ln -sf /usr/lib/libxcb.so.0 usr/lib/libxcb.so"), [])
 
@@ -141,7 +143,7 @@ class BashTest(unittest.TestCase):
         self.assertEqual(hits("Bash", command="sudo tee /etc/hosts <<EOF\n127.0.0.1 x\nEOF"), [("/etc/hosts", "system", "write")])
         self.assertEqual(hits("Bash", command="cp build/a.tgz /home/bob/a.tgz"), [("/home/bob/a.tgz", "otherUserHome", "write")])
         self.assertEqual(hits("Bash", command="cp ../other/a.txt ./a.txt"), [("/home/alice/other/a.txt", "otherProject", "read")])
-        # 目标不带斜杠也是目标：来源 /etc/hosts 是读，不能因为目标认不出是路径就把来源当成写
+        # a target without a slash is still a target: the source /etc/hosts is a read and must not be taken as a write just because the target is not recognised as a path
         self.assertEqual(hits("Bash", command="cp /etc/hosts hosts.bak"), [("/etc/hosts", "system", "read")])
         self.assertEqual(hits("Bash", command="cp -r /etc/nginx nginx-backup"), [("/etc/nginx", "system", "read")])
         self.assertEqual(hits("Bash", command="ln -sfn /run/service/x extracted/etc/sv/x"), [("/run/service/x", "system", "read")])
@@ -168,8 +170,9 @@ class BashTest(unittest.TestCase):
 
 
 class ProjectRootTest(unittest.TestCase):
-    """Claude Code 的 Bash 工具 cd 进子目录后 hook 里的 cwd 也跟着变——"在不在项目里"
-    要按项目根（往上找 .git 等标记）判断，不按 cwd。"""
+    """When Claude Code's Bash tool cds into a subdirectory, the cwd in the hook changes too. Whether
+    a path is "inside the project" must be decided by the project root (searching upwards for .git
+    and similar markers), not by cwd."""
 
     def setUp(self):
         self.base = tempfile.mkdtemp(prefix="cc-monitor-proj-")
@@ -177,7 +180,7 @@ class ProjectRootTest(unittest.TestCase):
         os.makedirs(os.path.join(self.proj, ".git"))
         os.makedirs(os.path.join(self.proj, "webui", "public"))
         os.makedirs(os.path.join(self.base, "other"))
-        # 临时目录在 /tmp 下会被整体忽略，测试里把 base 当"家目录"来绕开这一点
+        # temp directories under /tmp are ignored entirely, so the test treats base as the "home directory" to get around that
         os.environ["HOME"] = self.base
         workdir.DEFAULT_IGNORE, self._saved_ignore = (), workdir.DEFAULT_IGNORE
 
@@ -212,7 +215,7 @@ class RuleIntegrationTest(unittest.TestCase):
         self.assertIsNone(rule_id("Bash", command="ls -la"))
 
     def test_specific_rules_still_win(self):
-        # 已有的更具体的规则排在前面，先命中它们——跨目录规则只兜底。
+        # the existing, more specific rules come first and match first; the cross-workdir rules are only a fallback.
         self.assertEqual(rule_id("Bash", command="cat ~/.ssh/config"), "sensitive_file_read_bash")
         self.assertEqual(rule_id("Write", file_path="/home/alice/.ssh/authorized_keys", content="x"), "sensitive_file_write")
 

@@ -1,18 +1,16 @@
 #!/usr/bin/env bash
-# 一键启动 Web UI：没装依赖会先自动装一次，然后前台跑起来（Ctrl+C 停止）。
-# 想后台跑：nohup ./start.sh > /tmp/cc-monitor-webui.log 2>&1 &
-#
 # Start the Web UI: installs dependencies on first run, then runs in the
-# foreground (Ctrl+C to stop). Background: nohup ./start.sh > /tmp/log 2>&1 &
+# foreground (Ctrl+C to stop).
+# To run it in the background: nohup ./start.sh > /tmp/cc-monitor-webui.log 2>&1 &
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# ---------- 语言检测 / language detection ----------
-# 提示信息按系统语言输出：中文环境给中文，其它一律英文。
-# 优先级：CC_MONITOR_LANG 显式指定 > LC_ALL / LC_MESSAGES / LANG > macOS 系统区域。
-# macOS 从图形界面打开的终端经常压根不设 LANG，所以要额外问一次 AppleLocale，
-# 不然中文用户在 mac 上会看到英文。
+# ---------- language detection ----------
+# Messages follow the system language: Chinese for a Chinese locale, English for everything else.
+# Priority: explicit CC_MONITOR_LANG > LC_ALL / LC_MESSAGES / LANG > macOS system region.
+# Terminals opened from the macOS GUI often set no LANG at all, so AppleLocale is queried as well;
+# otherwise Chinese users on a Mac would get English.
 _cc_detect_lang() {
   case "${CC_MONITOR_LANG:-}" in
     zh*) printf 'zh'; return ;;
@@ -31,15 +29,16 @@ _cc_detect_lang() {
 }
 CC_LANG="$(_cc_detect_lang)"
 
-# say <中文> <English> —— 按当前语言选一条输出；say_err 同理但走 stderr
+# say <Chinese> <English>: print the one matching the current language; say_err does the same on stderr
 say() { if [ "$CC_LANG" = "zh" ]; then printf '%s\n' "$1"; else printf '%s\n' "$2"; fi; }
 
 cd "$REPO_ROOT/webui"
 
-# Web UI 和 cc_monitor 的 hook 各自按"当前进程的操作系统用户"算自己的 ~/.cc-monitor/
-# 目录——如果这里用 sudo/root 启动，但你平时在终端里是用自己的普通账号跑 claude，
-# 两边写的是完全不相干的两个 SQLite 数据库：终端里的确认框、审计事件，Web UI 的
-# "待批准"/审计日志页面永远看不到。只是提醒，不强制退出（真要两边都用 root 跑也行）。
+# The Web UI and the cc_monitor hook each derive their ~/.cc-monitor/ directory from the OS user
+# of the current process. If this is started with sudo/root while you normally run claude in the
+# terminal as your regular account, the two sides write two unrelated SQLite databases: the
+# terminal's confirmation prompts and audit events never show up on the Web UI's pending approval
+# and audit log pages. This is only a warning, not an exit (running both sides as root works too).
 if [ "$(id -u)" -eq 0 ] && [ -z "${CC_MONITOR_ALLOW_ROOT:-}" ]; then
   say "[CC-Monitor] 警告：正在用 root 启动 Web UI。如果你平时跑 claude 用的是普通账号，" \
       "[CC-Monitor] Warning: starting the Web UI as root. If you normally run claude as a regular user,"

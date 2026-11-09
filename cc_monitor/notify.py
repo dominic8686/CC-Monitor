@@ -38,13 +38,15 @@ ALLOW_STATUSES = ("allowed", "always_allowed") + tuple(TIMED_ALLOW_MINUTES)
 
 
 def _open_tty():
-    """打开控制终端；没有（无头/CI）就返回 None，Web UI 那条路照样能用。
+    """Open the controlling terminal. Return None if there is none (headless/CI); the Web UI path
+    still works then.
 
-    必须用无缓冲的二进制模式：文本模式的 "r+" 会套一层 BufferedRandom，构造时要求
-    底层 seekable——Linux 上对 tty 做 lseek 会返回 0（"成功"），macOS 上返回
-    ESPIPE，于是 open() 直接抛 io.UnsupportedOperation（OSError 的子类），被
-    except 吞掉后 tty 永远是 None：Mac 用户在终端里永远看不到提示、也没法敲
-    y/N，只剩网页一条路。buffering=0 拿到的是裸 FileIO，不检查 seekable。
+    It must be unbuffered binary mode. Text mode "r+" wraps the file in a BufferedRandom, which
+    requires the underlying file to be seekable when it is built. On Linux, lseek on a tty returns 0
+    ("success"); on macOS it returns ESPIPE, so open() raises io.UnsupportedOperation (a subclass of
+    OSError). The except swallowed that and tty was always None: Mac users never saw the prompt in
+    the terminal and could not type y/N, leaving the web page as the only path. buffering=0 gives a
+    raw FileIO, which does not check seekable.
     """
     try:
         return open("/dev/tty", "r+b", buffering=0)
@@ -60,11 +62,13 @@ def _tty_write(tty, text):
 
 
 def _wait_for_decision(approval_id, tty, timeout, parse_answer, timeout_note):
-    """终端 tty 和 Web UI 的"待批准"页面两条路同时等着，哪边先给出答案就用哪边的。
+    """Wait on the terminal tty and the Web UI "pending approval" page at the same time and use
+    whichever answers first.
 
-    parse_answer(answer_text) -> status 或 None：把终端里敲的内容翻译成
-    pending_approvals.status；返回 None 表示这次输入不算数、继续等。
-    返回最终落地的 status；超时返回 "expired"（已经写进数据库）。
+    parse_answer(answer_text) -> status or None: turns what was typed in the terminal into a
+    pending_approvals.status; None means this input does not count and we keep waiting.
+    Returns the status that was finally stored; on timeout returns "expired" (already written to
+    the database).
     """
     deadline = time.time() + timeout
     result_status = None
@@ -77,19 +81,20 @@ def _wait_for_decision(approval_id, tty, timeout, parse_answer, timeout_note):
             if tty is not None:
                 ready, _, _ = select.select([tty], [], [], wait_slice)
                 if ready:
-                    # 不用 readline()：Claude Code 的 TUI 让终端处于 raw 模式，回车发过来的
-                    # 是 "\r" 而不是 "\n"，readline 会一直等那个永远不来的换行，把整个
-                    # 轮询循环（包括网页那条路）卡死。直接把当前能读到的字节拿出来，看首
-                    # 字符：cooked 模式下 select 要等到回车才就绪，读到 "y\n"；raw 模式下
-                    # 敲 y 立刻就绪，读到 "y"——两种情况判断方式一样。
+                    # Do not use readline(): Claude Code's TUI keeps the terminal in raw mode, so
+                    # Enter sends "\r", not "\n". readline would wait forever for a newline that
+                    # never comes and freeze the whole polling loop (the web path included). Read
+                    # whatever bytes are available and look at the first character. In cooked mode
+                    # select is ready only after Enter and we read "y\n"; in raw mode it is ready as
+                    # soon as y is typed and we read "y". Both cases are checked the same way.
                     answer = os.read(tty.fileno(), 64).decode("utf-8", "replace").strip().lower()
                     status = parse_answer(answer)
                     if status:
                         storage.resolve_approval(approval_id, status, "tty")
             else:
                 time.sleep(wait_slice)
-            # 不管刚才是不是自己这一轮写进去的，都重新读一遍最终状态——
-            # tty 和网页可能几乎同时点/敲，只认数据库里实际落地的结果。
+            # Re-read the final status whether or not this round wrote it: the tty and the web
+            # page may answer almost at once, so only the result actually stored in the database counts.
             status = storage.poll_approval_status(approval_id)
             if status and status != "pending":
                 result_status = status
@@ -107,8 +112,8 @@ def _wait_for_decision(approval_id, tty, timeout, parse_answer, timeout_note):
 
 
 def _remember_session_allow(result_status, session_id, key):
-    # allowed_10m/allowed_30m 跟"一直允许"走的是同一张 session_always_allow 表，
-    # 区别只是多带一个 expires_at——到点之后 is_session_always_allowed() 就不再认它。
+    # allowed_10m/allowed_30m use the same session_always_allow table as "always allow"; the only
+    # difference is an expires_at, after which is_session_always_allowed() stops honouring the entry.
     if result_status in ("always_allowed",) + tuple(TIMED_ALLOW_MINUTES) and session_id:
         minutes = TIMED_ALLOW_MINUTES.get(result_status)
         expires_at = (
@@ -120,22 +125,25 @@ def _remember_session_allow(result_status, session_id, key):
 
 
 def confirm(tool_name, rule, matched_value, session_id=None, cwd=None, timeout=90):
-    """询问是否允许这次操作——终端 tty 和 Web UI 的"待批准"页面两条路同时等着，
-    哪边先给出答案就用哪边的。没有 tty（无头环境）完全不影响 Web UI 这条路。
+    """Ask whether to allow this operation. Wait on the terminal tty and the Web UI "pending
+    approval" page at the same time and use whichever answers first. Having no tty (headless)
+    does not affect the Web UI path at all.
 
-    超时比以前的纯 tty 版本（20s）长很多：人要先看到桌面通知/网页提示、点开
-    网页、找到这条、点按钮，比直接在当前终端敲 y 慢得多，20s 对着网页这条路
-    基本不够用。
+    The timeout is much longer than the old tty-only version (20s): a person has to notice the
+    desktop notification or web prompt, open the page, find the entry and click a button, which is
+    far slower than typing y in the current terminal. 20s was rarely enough for the web path.
 
-    返回 True（允许，包括"允许一次"和"一直允许该 session"两种）或 False（拒绝/超时）。
-    "一直允许"会在这里顺带把 session_id+matched_rule 记进 session_always_allow，
-    调用方（hook.py）不用另外处理。
+    Returns True (allowed, either "allow once" or "always allow for this session") or False
+    (denied or timed out). For "always allow" this function also records session_id+matched_rule
+    in session_always_allow, so the caller (hook.py) does not need to.
     """
-    # 规则的 title/desc（default_rules.json 里每条都有）：告诉人"这是要确认什么操作"，
-    # 光给一个 git_force_push 这样的 id 大多数人看不懂。用户自己加的规则没写就退回 id。
-    title = rule.get("title") or rule["id"]
-    desc = rule.get("desc") or ""
-    desktop_notify("CC-Monitor 需要确认：{}".format(title), "{}: {}".format(tool_name, matched_value[:80]))
+    # The rule's title/desc (every rule in default_rules.json has them) tell the person what they
+    # are being asked to confirm; an id such as git_force_push alone means little to most people.
+    # Prefer the English title_en/desc_en, fall back to the Chinese title/desc, and fall back to
+    # the id for user-added rules that have neither.
+    title = rule.get("title_en") or rule.get("title") or rule["id"]
+    desc = rule.get("desc_en") or rule.get("desc") or ""
+    desktop_notify("CC-Monitor needs confirmation: {}".format(title), "{}: {}".format(tool_name, matched_value[:80]))
     approval_id = storage.create_pending_approval(
         session_id=session_id,
         tool_name=tool_name,
@@ -149,12 +157,12 @@ def confirm(tool_name, rule, matched_value, session_id=None, cwd=None, timeout=9
     if tty is not None:
         _tty_write(
             tty,
-            "\n[CC-Monitor] 需要确认：{title}\n"
+            "\n[CC-Monitor] Confirmation needed: {title}\n"
             "{desc}"
-            "规则: {rule} · 风险: {risk} · 工具: {tool}\n匹配内容: {value}\n"
-            "是否允许? [y/N]（也可以去 Web UI 的“AI 审批台”处理，等待 {timeout}s 后默认拒绝）: ".format(
+            "Rule: {rule} · Risk: {risk} · Tool: {tool}\nMatched content: {value}\n"
+            "Allow? [y/N] (you can also answer in AI Approvals in the Web UI; denied after {timeout}s): ".format(
                 title=title,
-                desc=("说明: " + desc + "\n") if desc else "",
+                desc=("Details: " + desc + "\n") if desc else "",
                 rule=rule["id"],
                 risk=rule.get("risk", "-"),
                 tool=tool_name,
@@ -168,31 +176,34 @@ def confirm(tool_name, rule, matched_value, session_id=None, cwd=None, timeout=9
         tty,
         timeout,
         parse_answer=lambda answer: "allowed" if answer[:1] == "y" else "denied",
-        timeout_note="超时，默认拒绝",
+        timeout_note="Timed out; denied by default",
     )
     _remember_session_allow(result_status, session_id, rule["id"])
     return result_status in ALLOW_STATUSES
 
 
 def permission_session_key(tool_name):
-    """PermissionRequest 这条路没有规则 id，"一直允许"按工具名记（同一个 session 里
-    这个工具后续的原生询问都直接放行）——跟 Claude Code 自己那个"don't ask again"
-    粒度差不多，都是 session 级别。"""
+    """The PermissionRequest path has no rule id, so "always allow" is recorded per tool name
+    (later native prompts for this tool in the same session are allowed directly). That is about
+    the same granularity as Claude Code's own "don't ask again": per session."""
     return "permission:" + tool_name
 
 
 def permission_request(tool_name, matched_value, session_id=None, cwd=None, timeout=90):
-    """Claude Code 自己准备弹原生"Do you want to proceed?"确认框（PermissionRequest
-    hook 事件）——把它同步到 Web UI 的"AI 审批台"上，网页点了就替用户答掉。
+    """Claude Code is about to show its native "Do you want to proceed?" confirmation prompt
+    (the PermissionRequest hook event). Mirror it to AI Approvals in the Web UI; a click on the
+    web page answers it for the user.
 
-    跟 confirm() 的区别：这不是我们的规则判定出来的，是 Claude Code 自己的权限系统
-    要问；所以"没人答"的兜底不是拒绝，而是把这次询问原样交还给 Claude Code 的原生
-    确认框（hook 静默退出，Claude Code 该弹还弹）。终端里敲 y/n 直接答，敲回车/
-    其它键立刻交还原生框（人就在终端前，用原生框选项更多）。
+    Unlike confirm(), this did not come from our rules: Claude Code's own permission system is
+    asking. So the fallback when nobody answers is not to deny but to hand the question back to
+    Claude Code's native confirmation prompt unchanged (the hook exits quietly and Claude Code shows
+    its prompt as usual). Typing y/n in the terminal answers directly; Enter or any other key hands
+    it back to the native prompt at once (the person is at the terminal, and the native prompt has
+    more options).
 
-    返回 "allow" / "deny" / None（None = 交还原生确认框）。
+    Returns "allow" / "deny" / None (None = hand back to the native confirmation prompt).
     """
-    desktop_notify("CC-Monitor：Claude 请求权限", "{}: {}".format(tool_name, matched_value[:80]))
+    desktop_notify("CC-Monitor: Claude is requesting permission", "{}: {}".format(tool_name, matched_value[:80]))
     approval_id = storage.create_pending_approval(
         session_id=session_id,
         tool_name=tool_name,
@@ -207,9 +218,9 @@ def permission_request(tool_name, matched_value, session_id=None, cwd=None, time
     if tty is not None:
         _tty_write(
             tty,
-            "\n[CC-Monitor] Claude Code 请求权限\n"
-            "工具: {}\n内容: {}\n"
-            "是否允许? [y/n]（也可以去 Web UI 的“AI 审批台”处理；敲回车或等待 {}s 后转回 Claude Code 原生确认框）: ".format(
+            "\n[CC-Monitor] Claude Code is requesting permission\n"
+            "Tool: {}\nContent: {}\n"
+            "Allow? [y/n] (you can also answer in AI Approvals in the Web UI; press Enter or wait {}s to return to Claude Code's native confirmation prompt): ".format(
                 tool_name, matched_value, timeout
             ),
         )
@@ -222,7 +233,7 @@ def permission_request(tool_name, matched_value, session_id=None, cwd=None, time
         return "deferred"
 
     result_status = _wait_for_decision(
-        approval_id, tty, timeout, parse_answer=parse_answer, timeout_note="超时，转回 Claude Code 原生确认框"
+        approval_id, tty, timeout, parse_answer=parse_answer, timeout_note="Timed out; returning to Claude Code's native confirmation prompt"
     )
     _remember_session_allow(result_status, session_id, permission_session_key(tool_name))
     if result_status in ALLOW_STATUSES:

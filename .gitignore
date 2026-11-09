@@ -10,36 +10,36 @@ node_modules/
 npm-debug.log*
 *.tsbuildinfo
 
-# electron-builder 打包产物——几十上百 MB 的二进制，不该进仓库
+# electron-builder output: binaries of tens to hundreds of MB, do not commit
 webui/dist/
 
-# 本地临时存放、还没决定要不要合并的补丁文件
+# local patch files kept temporarily, not yet decided whether to merge
 patches/
 
-# CC-Monitor 运行时数据（不属于代码，不该进仓库）
+# CC-Monitor runtime data (not code, do not commit)
 .cc-monitor/
 *.db
 *.db-journal
 *.db-wal
 *.db-shm
 
-# Claude Code / hooks 安装时产生的备份
+# backups created when installing Claude Code hooks
 *.json.bak
 settings.json.bak.*
 
-# 编辑器 / OS
+# editors / OS
 .vscode/
 .idea/
 *.swp
 .DS_Store
 Thumbs.db
 
-# 日志
+# logs
 *.log
 
-# 本地笔记，不进仓库
+# local notes, not committed
 Note.MD
 
 
-# 官网静态页面（HTML/）不入库
+# static website pages (HTML/), not committed
 HTML/

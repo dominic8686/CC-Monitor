@@ -7,13 +7,13 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 if __name__ == "__main__":
     if platform.system() == "Darwin":
-        # macOS 用 nettop 采样（cc_monitor/probe_darwin.py），普通用户就能跑，不需要 root。
+        # macOS samples with nettop (cc_monitor/probe_darwin.py); a normal user can run it, no root needed.
         from cc_monitor.probe_darwin import run
         run()
     else:
         from cc_monitor.probe import run
 
         if os.name == "posix" and hasattr(os, "geteuid") and os.geteuid() != 0:
-            print("[CC-Monitor] 系统层探针需要 root 权限 (bpftrace 需要), 请用 sudo 运行", file=sys.stderr)
+            print("[CC-Monitor] The system-layer probe needs root (bpftrace requires it). Run it with sudo.", file=sys.stderr)
             sys.exit(1)
         run()

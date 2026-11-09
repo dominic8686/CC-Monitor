@@ -1,13 +1,16 @@
 #!/usr/bin/env bpftrace
-// CC-Monitor 系统层探针（Linux / eBPF）
+// CC-Monitor system-layer probe (Linux / eBPF)
 //
-// 独立于 Claude Code 自身的 hooks，直接在内核层跟踪所有从 `claude` 进程派生出来的
-// 子进程树的 execve（真正执行了什么命令）和 connect（真正连了哪个 IP:port）。
-// 用于交叉验证应用层 hooks 是否被绕过/篡改——hooks 是"自证清白"，这里是独立的第三方观察。
+// Independent of Claude Code's own hooks: traces, directly in the kernel, execve (what command
+// really ran) and connect (which IP:port was really contacted) across the whole process tree
+// spawned from the `claude` process.
+// Used to cross-check whether the application-layer hooks were bypassed or tampered with. Hooks
+// are self-reported; this is an independent third-party observation.
 //
-// 边界识别：子进程 fork 出来后、真正 exec 新程序之前，comm 仍然继承自父进程（"claude"）；
-// 一旦这个子进程 execve 到别的程序（比如 /bin/bash），就是它从 Claude Code 派生出来的证据。
-// 之后再用 sched_process_fork 把这层派生关系持续传播给后续所有子进程。
+// Boundary detection: after a child is forked and before it execs a new program, its comm is
+// still inherited from the parent ("claude"); once that child execves another program (say
+// /bin/bash), that is proof it was spawned from Claude Code.
+// From then on sched_process_fork propagates this lineage to every later descendant.
 
 BEGIN
 {
@@ -31,24 +34,26 @@ tracepoint:syscalls:sys_enter_execve
     }
 }
 
-// libc 的 getaddrinfo(node, ...) 第一个参数就是应用层真正想解析的域名（比如
-// "api.anthropic.com"）——比事后对连上的 IP 做反向 DNS（PTR 记录）靠谱得多：很多
-// 云厂商/CDN 出口 IP 根本没配 PTR，反向解析注定拿不到域名，但这里抓的是"当时问的
-// 是什么"，域名从连接发生之前就已经知道了。按 pid 记最近一次问的域名，接到 CONNECT
-// 时直接查表——Node.js 的 DNS 解析发生在 libuv worker 线程，但 bpftrace 的 pid
-// 内置变量取的是线程组 ID（等价于 getpid()），跟发起 connect() 的主线程是同一个值，
-// 能对上。
+// The first argument of libc's getaddrinfo(node, ...) is the domain the application actually
+// wants to resolve (e.g. "api.anthropic.com"). Far more reliable than reverse DNS (PTR record) on
+// the connected IP afterwards: many cloud/CDN egress IPs have no PTR at all, so a reverse lookup
+// can never yield a domain, whereas this captures "what was asked at the time", so the domain is
+// known before the connection happens. We keep the latest queried domain per pid and look it up
+// on CONNECT. Node.js resolves DNS on libuv worker threads, but bpftrace's pid builtin is the
+// thread group ID (same as getpid()), which equals the value for the main thread that calls
+// connect(), so they match.
 uprobe:libc:getaddrinfo
 /@watch[pid]/
 {
     @dns_query[pid] = str(arg0);
 }
 
-// AF_INET(2) 和 AF_INET6(10) 两族都要认。以前只判了 AF_INET，于是在开了 IPv6 的机器上
-// （现在绝大多数云主机和家宽都默认开着，很多 API 域名也同时有 AAAA 记录）走 v6 的连接
-// 一条都不会被记下来——不是报错，是静默的观测盲区，比漏报更难发现。
-// 端口在两族里都是网络序的 16 位，换算方式一样；地址取法不同：v4 是一个 32 位整数，
-// v6 是 16 字节数组，ntop() 两种都能格式化。
+// Both AF_INET(2) and AF_INET6(10) must be recognised. Previously only AF_INET was checked, so on
+// IPv6-enabled machines (today most cloud hosts and home broadband have it on by default, and many
+// API domains also have AAAA records) not a single v6 connection was recorded. Not an error but a
+// silent observation blind spot, harder to notice than a false negative.
+// The port is a 16-bit network-order value in both families and converts the same way; the address
+// differs: v4 is a 32-bit integer, v6 a 16-byte array, and ntop() formats both.
 tracepoint:syscalls:sys_enter_connect
 /@watch[pid]/
 {
@@ -65,14 +70,17 @@ tracepoint:syscalls:sys_enter_connect
     }
 }
 
-// 流量字节数统计——上面的 CONNECT 只知道"连过哪个 IP:port"，不知道传了多少数据。
-// TCP 收发字节数就得靠这两个内核函数：tcp_sendmsg 是发送路径（第三个参数是这次
-// 要发的字节数），tcp_cleanup_rbuf 是应用层从内核收包缓冲区取数据时回调的（第二个
-// 参数是这次取走的字节数，取不到数据/纯 ACK 之类场景会传 0 或负数，负数必须转成
-// 有符号 int32 判断，否则 bpftrace 默认按无符号 64 位读会把负数看成天文数字）。
-// 两个探点都直接从 `struct sock` 上取目的地址——内核里这个 socket 早就知道自己在
-// 跟谁通信，不需要像 CONNECT 事件那样另外记 fd→目的地址的映射。
-// 不逐个包上报（量太大），攒 2 秒钟合并一次再吐出来，跟 top 类工具一个思路。
+// Traffic byte counts. CONNECT above only knows "which IP:port was contacted", not how much data
+// moved. TCP send/receive bytes come from these two kernel functions: tcp_sendmsg is the send path
+// (the third argument is the number of bytes being sent), and tcp_cleanup_rbuf is called when the
+// application takes data from the kernel receive buffer (the second argument is the number of
+// bytes taken; with no data, a pure ACK and the like it is 0 or negative, and negatives must be
+// checked as signed int32, otherwise bpftrace reads them as unsigned 64-bit by default and they
+// become astronomically large).
+// Both probe points read the destination address straight from `struct sock`: the kernel socket
+// already knows its peer, so there is no need for an fd -> destination map as with CONNECT events.
+// Not reported per packet (far too much volume): accumulated for 2 seconds and emitted together,
+// the same idea as top-style tools.
 kprobe:tcp_sendmsg
 /@watch[pid]/
 {
@@ -83,8 +91,8 @@ kprobe:tcp_sendmsg
     if ($sk->__sk_common.skc_family == 2 && $size > 0) {
         @tx_bytes[ntop($sk->__sk_common.skc_daddr), $dport] = sum($size);
     }
-    // IPv6 的目的地址在 skc_v6_daddr（v4 那个 skc_daddr 在 v6 socket 上是 0），
-    // 否则 v6 连接的流量会全部堆到 "0.0.0.0" 这个假地址上。
+    // The IPv6 destination address is in skc_v6_daddr (the v4 skc_daddr is 0 on a v6 socket);
+    // otherwise all v6 traffic would pile up on the bogus address "0.0.0.0".
     if ($sk->__sk_common.skc_family == 10 && $size > 0) {
         @tx_bytes[ntop($sk->__sk_common.skc_v6_daddr.in6_u.u6_addr8), $dport] = sum($size);
     }

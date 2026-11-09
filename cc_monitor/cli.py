@@ -10,19 +10,20 @@ from . import colors as col
 from . import format as fmt
 from . import policy, rematch, storage, transcript
 
-# 介入级别的显示文案。注意不要再写成"暂停审计"——paused 这一档审计照常在跑，
-# 停下来的只是拦截，叫"暂停审计"会让人以为记录也断了（见 audit_state.py 的模块注释）。
+# Display text for each intervention level. Do not go back to calling it "audit paused": in the
+# paused level auditing keeps running and only blocking stops. "Audit paused" makes people think
+# recording stopped too (see the module docstring in audit_state.py).
 STATE_LABELS = {
-    "running": "拦截中（判定 + 记录 + 拦截）",
-    "paused": "观察模式 permissive（判定 + 记录，不拦截、不弹确认框）",
-    "stopped": "已关闭（不判定、不记录，等价于没装）",
+    "running": "Enforcing (evaluate + record + block)",
+    "paused": "Permissive (observe only: evaluate + record, no blocking, no confirmation prompts)",
+    "stopped": "Off (no evaluation, no recording; same as not installed)",
 }
 
 DECISION_LABELS = {
-    "allowed": "放行",
-    "blocked": "拦截",
-    "completed": "已完成",
-    "observed": "系统观测",
+    "allowed": "Allowed",
+    "blocked": "Blocked",
+    "completed": "Completed",
+    "observed": "Observed",
 }
 
 
@@ -30,22 +31,23 @@ _ESC = "\033["
 
 
 def _color_extra_line(line):
-    # "结果:"/"输出:" 这类行的内容已经在 format.py 里按字段/关键字精细上色过了
-    # （比如输出里的报错关键字、文件路径），这里不能再整行套一层颜色——
-    # ANSI reset 不是"退栈"，套了外层颜色之后遇到内层的 reset 会把外层也一起清掉，
-    # 显示效果反而更花。原样透传，只处理还没上色的行（比如探针的 ⚠/✓ 提示）。
+    # Lines such as "Result:" / "Output:" were already coloured field by field and keyword by
+    # keyword in format.py (error keywords in the output, file paths). Do not wrap the whole line
+    # in another colour here: an ANSI reset does not "pop a stack", so the inner reset also clears
+    # the outer colour and the result looks messier. Pass those through unchanged and only colour
+    # lines that have no colour yet (such as the probe's ⚠/✓ notes).
     if _ESC in line:
         return line
     if line.startswith("⚠"):
         return col.c(line, color="bright_red", bold=True)
-    if line.startswith("✓") or "吻合" in line:
+    if line.startswith("✓") or "Matches the hook record" in line:
         return col.c(line, color="green")
     return col.c(line, color="gray")
 
 
 def cmd_tail(args):
     last_id = 0
-    print("[CC-Monitor] 实时查看监测事件，按 Ctrl+C 退出")
+    print("[CC-Monitor] Watching monitored events live. Press Ctrl+C to exit.")
     try:
         while True:
             rows = storage.fetch_recent(limit=500, since_id=last_id)
@@ -62,7 +64,7 @@ def cmd_tail(args):
                 rule_text = matched_rule or "-"
 
                 print(
-                    "{ts} [{risk}] {stage} · {label} → {decision} (规则={rule}) {cwd}".format(
+                    "{ts} [{risk}] {stage} · {label} → {decision} (rule={rule}) {cwd}".format(
                         ts=col.c(ts, dim=True),
                         risk=col.risk(risk or "-"),
                         stage=col.c(fmt.stage_label(source), dim=True),
@@ -73,11 +75,11 @@ def cmd_tail(args):
                     )
                 )
                 if summary:
-                    print("    内容: {}".format(summary))
+                    print("    Content: {}".format(summary))
                 for line in extra:
                     print("    {}".format(_color_extra_line(line)))
                 if args.verbose:
-                    print("    {}".format(col.c("原始数据: {}".format(detail_raw), dim=True)))
+                    print("    {}".format(col.c("Raw data: {}".format(detail_raw), dim=True)))
             time.sleep(1)
     except KeyboardInterrupt:
         pass
@@ -88,55 +90,58 @@ def cmd_rules(args):
 
 
 def cmd_rematch(args):
-    """用当前生效的规则把审计库里所有 PreToolUse 事件重新判一遍（见 rematch.py 的说明）。
-    默认只预览，--apply 才写库；--quiet 给 hook 后台自动触发用，不打印明细。"""
+    """Re-evaluate every PreToolUse event in the audit database against the rules now in effect
+    (see rematch.py). Preview only by default; --apply writes to the database. --quiet is for the
+    hook's automatic background run and prints no details."""
     total, changes = rematch.run(apply=args.apply)
     if args.quiet:
         return
-    print("共检查 {} 条 PreToolUse 事件，{} 条的命中规则/风险等级会变化".format(total, len(changes)))
+    print("Checked {} PreToolUse events; {} would change matched rule or risk level".format(total, len(changes)))
     for event_id, tool_name, old_rule, new_rule, new_risk, summary in changes:
         print("  #{} {} {} -> {} [{}]  {}".format(event_id, tool_name, old_rule or "-", new_rule or "-", new_risk, summary))
     if not changes:
         return
     if args.apply:
-        print(col.c("已更新 {} 条事件的 risk/matched_rule".format(len(changes)), color="green", bold=True))
+        print(col.c("Updated risk/matched_rule on {} events".format(len(changes)), color="green", bold=True))
     else:
-        print(col.c("以上只是预览，加 --apply 才会写入数据库", dim=True))
+        print(col.c("This is only a preview. Add --apply to write to the database.", dim=True))
 
 
 def cmd_stats(args):
     rows = storage.fetch_recent(limit=1_000_000, since_id=0)
     by_risk = Counter(r[4] for r in rows)
     by_decision = Counter(r[6] for r in rows)
-    print("总事件数:", len(rows))
-    print("按风险等级:", dict(by_risk))
-    print("按决策结果:", dict(by_decision))
+    print("Total events:", len(rows))
+    print("By risk level:", dict(by_risk))
+    print("By decision:", dict(by_decision))
 
 
 def cmd_verify(args):
-    # 绕过检测的原理是拿系统层探针观测到的 execve 跟 hook 层记录的命令做比对。只有
-    # Linux 的 bpftrace 探针看得到 execve；macOS 那份探针用的是 nettop，只覆盖网络，
-    # 压根不产生 execve 观测，于是 hook_bypass_suspected 这个标记在 macOS 上恒为空。
-    # 如果照旧打印绿色的"未发现可疑记录"，用户看到的是"检查通过"，实际是"从未检查过"——
-    # 这种假安全感比没有这个功能更危险，所以在 macOS 上如实说明能力缺失。
+    # Bypass detection compares the execve calls seen by the system-layer probe with the commands
+    # the hook layer recorded. Only the Linux bpftrace probe sees execve; the macOS probe uses
+    # nettop, covers only the network and never produces execve observations, so the
+    # hook_bypass_suspected flag is always empty on macOS. Printing the usual green "No suspicious
+    # records" there would tell the user "check passed" when the check never ran. That false sense
+    # of safety is worse than not having the feature, so on macOS we state plainly that it is missing.
     if platform.system() == "Darwin":
-        print(col.c("本平台（macOS）不支持执行层交叉验证。", color="yellow", bold=True))
+        print(col.c("This platform (macOS) does not support the execution-layer cross-check.", color="yellow", bold=True))
         print(
-            "绕过检测要靠内核层观测每一次 execve，再跟 hook 记录比对。macOS 上的系统层探针用的是\n"
-            "nettop，只能看到网络连接，看不到命令执行（Apple 的 Endpoint Security Framework 需要\n"
-            "签过名的 system extension，见 DESIGN.md 的规划）。所以这里既不会报警，也不代表安全——\n"
-            "是这项检查在本平台上根本没有运行。"
+            "Bypass detection needs the kernel layer to observe every execve and compare it with the\n"
+            "hook records. The system-layer probe on macOS uses nettop, which sees network connections\n"
+            "but not command execution (Apple's Endpoint Security Framework needs a signed system\n"
+            "extension; see the plan in DESIGN.md). So the absence of an alert here does not mean you\n"
+            "are safe: this check does not run on this platform at all."
         )
-        print(col.c("仍然有效的部分：hook 层的完整审计记录、以及探针的网络连接/流量观测。", dim=True))
+        print(col.c("Still working: the full hook-layer audit log and the probe's network connection/traffic observation.", dim=True))
         return
 
     rows = storage.fetch_last(limit=args.limit)
     suspects = [r for r in rows if r[5] == "hook_bypass_suspected"]
     if not suspects:
-        print(col.c("未发现可疑记录：系统层探针（bpftrace）观测到的命令都能在 hook 记录里找到对应。", color="green"))
-        print(col.c("（前提是 `sudo CC-Monitor-probe` 探针在运行；没运行的话这里永远是空的。）", dim=True))
+        print(col.c("No suspicious records: every command the system-layer probe (bpftrace) observed has a matching hook record.", color="green"))
+        print(col.c("(This assumes the `sudo CC-Monitor-probe` probe is running; if it is not, this list is always empty.)", dim=True))
         return
-    print(col.c("⚠ 发现 {} 条系统层观测到、但 hook 层没有对应记录的命令（可能绕过了监测）：".format(len(suspects)), color="bright_red", bold=True))
+    print(col.c("⚠ Found {} commands observed at the system layer with no matching hook-layer record (monitoring may have been bypassed):".format(len(suspects)), color="bright_red", bold=True))
     for row in suspects:
         (_id, ts, _source, tool_name, _risk, _rule, _decision, detail_raw, _cwd) = row
         try:
@@ -145,7 +150,7 @@ def cmd_verify(args):
             detail = {}
         cmd_text = detail.get("shell_command") or detail.get("argv") or ""
         print(
-            "  [{ts}] pid={pid} comm={comm} 命令: {cmd}".format(
+            "  [{ts}] pid={pid} comm={comm} command: {cmd}".format(
                 ts=col.c(ts, dim=True),
                 pid=detail.get("pid"),
                 comm=col.c(str(tool_name), color="cyan"),
@@ -155,22 +160,22 @@ def cmd_verify(args):
 
 
 WORKDIR_RULE_LABELS = {
-    "workdir_escape_write_sensitive": "写入 · 敏感位置（家目录隐藏文件/别的用户/系统目录）",
-    "workdir_escape_write_other": "写入 · 其它项目目录",
-    "workdir_escape_read_sensitive": "读取 · 敏感位置（家目录隐藏文件/别的用户）",
-    "workdir_escape_read_other": "读取 · 系统目录/其它项目目录",
+    "workdir_escape_write_sensitive": "Write · sensitive location (hidden home-dir file / another user's home directory / system directory)",
+    "workdir_escape_write_other": "Write · another project directory",
+    "workdir_escape_read_sensitive": "Read · sensitive location (hidden home-dir file / another user's home directory)",
+    "workdir_escape_read_other": "Read · system directory / another project directory",
 }
 
 
 def cmd_workdir(args):
-    """列出 AI 跑到当前工作目录之外去操作文件的记录（命中 workdir_escape_* 规则的事件）。"""
+    """List file operations the AI made outside the current working directory (events that matched a workdir_escape_* rule)."""
     rows = storage.fetch_by_rule_prefix("workdir_escape_", limit=args.limit)
     if not rows:
-        print(col.c("没有发现跨工作目录的文件操作记录。", color="green"))
-        print(col.c("（只统计命中 workdir_escape_* 规则的事件；被更具体的规则先命中的，比如读 ~/.ssh，算在那条规则里。）", dim=True))
+        print(col.c("No cross-workdir file operations found.", color="green"))
+        print(col.c("(Only events that matched a workdir_escape_* rule are counted. Events a more specific rule matched first, such as reading ~/.ssh, count under that rule.)", dim=True))
         return
     by_rule = Counter(r[5] for r in rows)
-    print(col.c("最近 {} 条跨工作目录的文件操作：".format(len(rows)), bold=True))
+    print(col.c("Last {} cross-workdir file operations:".format(len(rows)), bold=True))
     for rule, n in by_rule.most_common():
         print("  {} {}".format(col.c(str(n).rjust(5), color="cyan"), WORKDIR_RULE_LABELS.get(rule, rule)))
     print()
@@ -192,20 +197,20 @@ def cmd_workdir(args):
             )
         )
         if summary:
-            print("    内容: {}".format(summary))
+            print("    Content: {}".format(summary))
 
 
 def cmd_tap(args):
     session_id = args.session or storage.get_latest_session_id()
     if not session_id:
-        print("还没有任何审计事件，找不到可用的 session。先让 Claude Code 跑点操作再试。")
+        print("No audit events yet, so there is no session to show. Let Claude Code run a few operations and try again.")
         return
 
     path = storage.get_transcript_path(session_id)
     if not path:
         print(
-            "没找到 session {} 对应的 transcript 文件——可能这个 session 是在装 hook 之前开始的，"
-            "还没有任何一次工具调用被记录过 transcript_path。".format(session_id)
+            "No transcript file found for session {}. The session may have started before the hook was "
+            "installed, so no tool call has recorded a transcript_path yet.".format(session_id)
         )
         return
 
@@ -221,7 +226,7 @@ def cmd_tap(args):
 
     total = transcript.count_lines(path)
     start_line = max(0, total - 20)
-    print(col.c("实时追踪中，按 Ctrl+C 退出", dim=True))
+    print(col.c("Following live. Press Ctrl+C to exit.", dim=True))
     try:
         while True:
             entries, start_line = transcript.read_entries(path, start_line=start_line, limit=1000)
@@ -237,14 +242,14 @@ def cmd_audit(args):
     if args.action == "status":
         info = audit_state.get_state_info()
         label = STATE_LABELS.get(info["state"], info["state"])
-        print(col.c("当前状态: {}".format(label), bold=True))
+        print(col.c("Current state: {}".format(label), bold=True))
         if info.get("changedAt"):
-            print(col.c("切换时间: {}".format(info["changedAt"]), dim=True))
+            print(col.c("Changed at: {}".format(info["changedAt"]), dim=True))
         return
     state = {
         "start": "running",
         "enforcing": "running",
-        # permissive 是主推的名字，pause 保留下来是为了不打断老用户的肌肉记忆和已有脚本。
+        # permissive is the preferred name; pause stays so existing users' habits and scripts keep working.
         "permissive": "paused",
         "observe": "paused",
         "pause": "paused",
@@ -252,45 +257,45 @@ def cmd_audit(args):
         "off": "stopped",
     }[args.action]
     audit_state.set_state(state)
-    print(col.c("已切换到: {}".format(STATE_LABELS[state]), color="green", bold=True))
+    print(col.c("Switched to: {}".format(STATE_LABELS[state]), color="green", bold=True))
 
 
 def main():
-    parser = argparse.ArgumentParser(prog="CC-Monitor", description="CC-Monitor：Claude Code 操作监测工具")
+    parser = argparse.ArgumentParser(prog="CC-Monitor", description="CC-Monitor: a monitor for Claude Code operations")
     sub = parser.add_subparsers(dest="cmd")
 
-    p_tail = sub.add_parser("tail", help="实时查看监测事件")
-    p_tail.add_argument("-v", "--verbose", action="store_true", help="打印事件详情")
+    p_tail = sub.add_parser("tail", help="Watch monitored events live")
+    p_tail.add_argument("-v", "--verbose", action="store_true", help="Print event details")
     p_tail.set_defaults(func=cmd_tail)
 
-    p_rules = sub.add_parser("rules", help="查看当前生效的规则")
+    p_rules = sub.add_parser("rules", help="Show the rules now in effect")
     p_rules.set_defaults(func=cmd_rules)
 
-    p_rematch = sub.add_parser("rematch", help="用当前规则重新判定历史事件的命中规则（默认只预览，--apply 才写库）")
-    p_rematch.add_argument("--apply", action="store_true", help="真的更新数据库里的 risk/matched_rule")
-    p_rematch.add_argument("--quiet", action="store_true", help="不打印明细（hook 后台自动触发时用）")
+    p_rematch = sub.add_parser("rematch", help="Re-evaluate the matched rule of past events with the current rules (preview by default; --apply writes to the database)")
+    p_rematch.add_argument("--apply", action="store_true", help="Actually update risk/matched_rule in the database")
+    p_rematch.add_argument("--quiet", action="store_true", help="Print no details (used when the hook runs it in the background)")
     p_rematch.set_defaults(func=cmd_rematch)
 
-    p_stats = sub.add_parser("stats", help="查看统计信息")
+    p_stats = sub.add_parser("stats", help="Show statistics")
     p_stats.set_defaults(func=cmd_stats)
 
-    p_verify = sub.add_parser("verify", help="查看系统层探针标记的可疑（疑似绕过监测）记录")
-    p_verify.add_argument("--limit", type=int, default=5000, help="最多回溯检查多少条事件")
+    p_verify = sub.add_parser("verify", help="Show records the system-layer probe flagged as suspicious (suspected bypass)")
+    p_verify.add_argument("--limit", type=int, default=5000, help="Maximum number of past events to check")
     p_verify.set_defaults(func=cmd_verify)
 
-    p_workdir = sub.add_parser("workdir", help="查看 AI 跨出工作目录去读写文件的记录（命中 workdir_escape_* 规则的事件）")
-    p_workdir.add_argument("--limit", type=int, default=100, help="最多显示多少条（默认 100）")
+    p_workdir = sub.add_parser("workdir", help="Show file reads and writes the AI made outside the working directory (events that matched a workdir_escape_* rule)")
+    p_workdir.add_argument("--limit", type=int, default=100, help="Maximum number of records to show (default 100)")
     p_workdir.set_defaults(func=cmd_workdir)
 
-    p_tap = sub.add_parser("tap", help="Claude Tap：查看某个 session 发给/收到模型的完整对话内容")
-    p_tap.add_argument("--session", help="session id（不指定则用最近一次监测到的 session）")
-    p_tap.add_argument("--limit", type=int, default=200, help="非 -f 模式下最多显示多少条")
-    p_tap.add_argument("-f", "--follow", action="store_true", help="像 tail -f 一样持续追踪新内容")
+    p_tap = sub.add_parser("tap", help="Claude Tap: show the full conversation a session sent to and received from the model")
+    p_tap.add_argument("--session", help="session id (defaults to the most recently monitored session)")
+    p_tap.add_argument("--limit", type=int, default=200, help="Maximum number of entries to show without -f")
+    p_tap.add_argument("-f", "--follow", action="store_true", help="Keep following new content, like tail -f")
     p_tap.set_defaults(func=cmd_tap)
 
     p_audit = sub.add_parser(
         "audit",
-        help="切换介入级别（拦截 / 观察模式 permissive / 关闭），或查看当前级别",
+        help="Switch the intervention level (Enforcing / Permissive / Off) or show the current level",
     )
     p_audit.add_argument(
         "action",
@@ -301,8 +306,8 @@ def main():
             "status",
         ],
         help=(
-            "start/enforcing=正常拦截；permissive/observe=观察模式，只记录不拦截不弹框"
-            "（pause 是它的旧名字，仍可用）；stop/off=完全不介入；status=查看当前级别"
+            "start/enforcing=block as usual; permissive/observe=observe only, record without blocking or prompting "
+            "(pause is its old name and still works); stop/off=do not intervene at all; status=show the current level"
         ),
     )
     p_audit.set_defaults(func=cmd_audit)

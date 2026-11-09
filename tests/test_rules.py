@@ -1,7 +1,8 @@
-"""default_rules.json 的回归测试：哪些命令/路径必须命中哪条规则、哪些不能误报。
+"""Regression tests for default_rules.json: which commands/paths must match which rule, and which
+must not be false positives.
 
-直接跑：python3 -m unittest tests/test_rules.py
-用隔离的 CC_MONITOR_HOME，不碰 ~/.cc-monitor 里用户自己的 rules.json。
+Run directly: python3 -m unittest tests/test_rules.py
+Uses an isolated CC_MONITOR_HOME and never touches the user's own rules.json in ~/.cc-monitor.
 """
 import os
 import sys
@@ -58,8 +59,9 @@ class SystemPackageInstallTest(unittest.TestCase):
 
 
 class SegmentMatchTest(unittest.TestCase):
-    """match="segment" 只看子命令开头：提到安装命令字样的字符串/heredoc 不能误报，
-    真正在执行的（包括藏在 bash -c / xargs / 环境变量前缀 / 子 shell 括号里的）要命中。"""
+    """match="segment" looks only at the start of each subcommand: strings/heredocs that merely
+    mention install commands must not be false positives, while commands really being run
+    (including ones hidden in bash -c / xargs / env var prefixes / subshell brackets) must match."""
 
     INSTALL_RULES = ("system_package_install", "package_install_other", "npm_global_install", "npm_local_install",
                      "sudo_usage", "sudo_pip_install", "pip_install_no_venv", "su_pkexec_privilege_escalation")
@@ -122,20 +124,21 @@ class SegmentMatchTest(unittest.TestCase):
 
 
 class RuleMetaTest(unittest.TestCase):
-    """每条默认规则都要有通俗的 title/desc（中英文）——审批台和终端确认框靠它们告诉人
-    "这是要确认什么操作"，光给一个规则 id 看不懂。"""
+    """Every default rule needs a plain title/desc (in Chinese and English). AI Approvals and the
+    terminal confirmation prompt use them to tell people what they are being asked to confirm; a
+    rule id alone is not understandable."""
 
     def test_every_default_rule_has_title_and_desc(self):
         import json
         rules = json.loads(policy.DEFAULT_RULES_PATH.read_text(encoding="utf-8"))
         for r in rules:
             for key in ("title", "desc", "title_en", "desc_en"):
-                self.assertTrue(isinstance(r.get(key), str) and r[key].strip(), "{} 缺 {}".format(r["id"], key))
+                self.assertTrue(isinstance(r.get(key), str) and r[key].strip(), "{} is missing {}".format(r["id"], key))
             self.assertLess(len(r["title"]), 40, r["id"])
 
 
 class RematchTest(unittest.TestCase):
-    """规则改了之后，历史事件的 matched_rule 要能按新规则重算；decision 不动。"""
+    """After the rules change, matched_rule on past events must be recomputable with the new rules; decision stays unchanged."""
 
     def test_rematch_updates_stale_matches(self):
         from cc_monitor import rematch, storage
@@ -161,7 +164,7 @@ class RematchTest(unittest.TestCase):
         self.assertEqual(rematch.run(apply=False)[1], [])
         fp = policy.rules_fingerprint(policy.load_rules())
         self.assertEqual(storage.get_meta(rematch.FINGERPRINT_KEY), fp)
-        # 指纹没变就不会再认领
+        # If the fingerprint has not changed, it is not claimed again
         self.assertFalse(storage.claim_meta(rematch.FINGERPRINT_KEY, fp))
         self.assertTrue(storage.claim_meta(rematch.FINGERPRINT_KEY, "other"))
 

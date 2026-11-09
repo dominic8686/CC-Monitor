@@ -1,25 +1,18 @@
 #!/usr/bin/env bash
-# 一键安装：把 hooks 注册进 Claude Code + 装好 Web UI 的依赖。
-# 用法：
-#   ./install.sh                        # hooks 全局安装（写 ~/.claude/settings.json）
-#   ./install.sh --project /path        # hooks 只对某个项目生效
-#   ./install.sh --skip-geoip           # 不下载 GeoIP 数据库（离线/不需要世界地图时）
-#   ./install.sh --skip-ccstatusline    # 不装/不接 ccstatusline 状态栏
-#   其它参数跟 install.py 支持的完全一样，原样透传过去。
-#
 # One-shot install: register the hooks into Claude Code + install the Web UI deps.
+# Usage:
 #   ./install.sh                        # global hooks (writes ~/.claude/settings.json)
 #   ./install.sh --project /path        # hooks scoped to one project
-#   ./install.sh --skip-geoip           # skip the GeoIP database download
-#   ./install.sh --skip-ccstatusline    # skip installing/wiring ccstatusline
-#   Any other flag is passed straight through to install.py.
+#   ./install.sh --skip-geoip           # skip the GeoIP database download (offline / no world map needed)
+#   ./install.sh --skip-ccstatusline    # skip installing/wiring the ccstatusline status line
+#   Any other flag is exactly what install.py accepts and is passed straight through to it.
 set -euo pipefail
 
-# ---------- 语言检测 / language detection ----------
-# 提示信息按系统语言输出：中文环境给中文，其它一律英文。
-# 优先级：CC_MONITOR_LANG 显式指定 > LC_ALL / LC_MESSAGES / LANG > macOS 系统区域。
-# macOS 从图形界面打开的终端经常压根不设 LANG，所以要额外问一次 AppleLocale，
-# 不然中文用户在 mac 上会看到英文。
+# ---------- language detection ----------
+# Messages follow the system language: Chinese for a Chinese locale, English for everything else.
+# Priority: explicit CC_MONITOR_LANG > LC_ALL / LC_MESSAGES / LANG > macOS system region.
+# Terminals opened from the macOS GUI often set no LANG at all, so AppleLocale is queried as well;
+# otherwise Chinese users on a Mac would get English.
 _cc_detect_lang() {
   case "${CC_MONITOR_LANG:-}" in
     zh*) printf 'zh'; return ;;
@@ -38,13 +31,13 @@ _cc_detect_lang() {
 }
 CC_LANG="$(_cc_detect_lang)"
 
-# say <中文> <English> —— 按当前语言选一条输出；say_err 同理但走 stderr
+# say <Chinese> <English>: print the one matching the current language; say_err does the same on stderr
 say() { if [ "$CC_LANG" = "zh" ]; then printf '%s\n' "$1"; else printf '%s\n' "$2"; fi; }
 say_err() { if [ "$CC_LANG" = "zh" ]; then printf '%s\n' "$1" >&2; else printf '%s\n' "$2" >&2; fi; }
 
-# --skip-geoip / --skip-ccstatusline 是这个脚本自己认的，不能透传给 install.py
-# （argparse 会报未知参数）。也可以用环境变量 CC_MONITOR_SKIP_GEOIP=1 /
-# CC_MONITOR_SKIP_CCSTATUSLINE=1。
+# --skip-geoip / --skip-ccstatusline are handled by this script and must not be passed on to
+# install.py (argparse would reject them as unknown). The environment variables
+# CC_MONITOR_SKIP_GEOIP=1 / CC_MONITOR_SKIP_CCSTATUSLINE=1 work too.
 SKIP_GEOIP="${CC_MONITOR_SKIP_GEOIP:-}"
 SKIP_CCSTATUSLINE="${CC_MONITOR_SKIP_CCSTATUSLINE:-}"
 PASSTHRU=()
@@ -57,8 +50,8 @@ for arg in "$@"; do
 done
 set -- "${PASSTHRU[@]+"${PASSTHRU[@]}"}"
 
-# 不管从哪个目录调用这个脚本，都用脚本自己所在的目录当 REPO_ROOT——
-# 不能假设用户是 cd 到这个目录之后才执行的。
+# Whatever directory this script is called from, REPO_ROOT is the script's own directory;
+# we cannot assume the user cd'd here before running it.
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$REPO_ROOT"
 
@@ -70,11 +63,12 @@ fi
 
 say "[CC-Monitor] 1/5 ccstatusline（终端状态栏，显示模型/额度/git 分支等）..." \
     "[CC-Monitor] 1/5 ccstatusline (terminal status line: model / quota / git branch)..."
-# 先装包，装完 install.py 那一步才能检测到 `ccstatusline` 命令、把它接进 statusLine
-# 配置——顺序不能反。两层都做"已经有就跳过"：这里检查命令是否已经在 PATH 上（不管是
-# 这个脚本之前装的还是用户自己装的），装过就不重复装/升级；接不接进 statusLine 配置
-# 由 install.py 的 configure_statusline() 再检查一遍 settings.json 里有没有 statusLine
-# 键，两边各自幂等，不会把用户已有的定制覆盖掉。
+# Install the package first: only then can the install.py step find the `ccstatusline` command
+# and wire it into the statusLine setting, so the order matters. Both layers skip what is already
+# there: here we check whether the command is already on PATH (whether this script installed it
+# earlier or the user did) and do not reinstall/upgrade it; whether to wire it into statusLine is
+# decided by install.py's configure_statusline(), which checks settings.json for a statusLine key.
+# Each side is idempotent, and neither overwrites the user's existing customisations.
 if [ -n "$SKIP_CCSTATUSLINE" ]; then
   say "[CC-Monitor] 跳过 ccstatusline（--skip-ccstatusline）。" \
       "[CC-Monitor] Skipping ccstatusline (--skip-ccstatusline)."
@@ -126,14 +120,16 @@ else
 fi
 
 echo
-# GeoIP 数据库：网络流量页的归属地列和世界地图靠它，不随仓库分发（几十 MB，且许可证
-# 要求单独获取）。默认下载 DB-IP Lite（CC BY 4.0，不用注册账号）的 IPv4 city 库，来源是
-# sapics/ip-location-db 每日自动转出的 .mmdb。已经有任何一个能用的库（包括自己放的
-# MaxMind GeoLite2）就不重复下；下载失败只是提示，不中断安装——这是可选功能。
-# 也可以用 CC_MONITOR_SKIP_GEOIP=1 / --skip-geoip 跳过。
+# GeoIP database: the location column and world map on the Network page rely on it. It is not
+# shipped with the repository (tens of MB, and the licence requires obtaining it separately). By
+# default we download the DB-IP Lite IPv4 city database (CC BY 4.0, no account needed) as the .mmdb
+# that sapics/ip-location-db converts automatically every day. If any usable database is already
+# present (including a MaxMind GeoLite2 you placed yourself) nothing is downloaded; a failed download
+# only prints a note and does not stop the install, since this is optional.
+# Skip it with CC_MONITOR_SKIP_GEOIP=1 / --skip-geoip.
 GEOIP_DIR="${CC_MONITOR_HOME:-$HOME/.cc-monitor}"
 GEOIP_TARGET="$GEOIP_DIR/dbip-city.mmdb"
-# 下载地址可以用 CC_MONITOR_GEOIP_URL 换成镜像（比如 GitHub 访问不畅的时候）。
+# CC_MONITOR_GEOIP_URL can point the download at a mirror (e.g. when GitHub is hard to reach).
 GEOIP_URL="${CC_MONITOR_GEOIP_URL:-https://github.com/sapics/ip-location-db/releases/download/latest/dbip-city-ipv4.mmdb}"
 if [ -n "$SKIP_GEOIP" ]; then
   say "[CC-Monitor] 5/5 跳过 GeoIP 数据库下载（--skip-geoip）。" \
@@ -155,9 +151,10 @@ else
     say_err "[CC-Monitor] 没找到 curl 或 wget，没法自动下载。" \
             "[CC-Monitor] Neither curl nor wget found — cannot download automatically."
   fi
-  # 空文件/半截文件不能留着——geoip.js 打开一个坏 mmdb 会静默失败，页面上看起来像"没配置"，
-  # 比没有文件还难排查。正常的库有几十 MB，小于 1MB 一律当下载失败。
-  GEOIP_SIZE=$(( $(wc -c < "$GEOIP_TMP" 2>/dev/null || echo 0) ))  # macOS 的 wc 带前导空格，算术展开顺手去掉
+  # Never keep an empty or partial file: geoip.js fails silently on a broken mmdb and the page looks
+  # "not configured", which is harder to track down than a missing file. A real database is tens of
+  # MB, so anything under 1MB counts as a failed download.
+  GEOIP_SIZE=$(( $(wc -c < "$GEOIP_TMP" 2>/dev/null || echo 0) ))  # macOS wc pads with leading spaces; the arithmetic expansion strips them
   if [ -n "$geoip_ok" ] && [ "$GEOIP_SIZE" -gt 1000000 ]; then
     mv -f "$GEOIP_TMP" "$GEOIP_TARGET"
     say "[CC-Monitor] GeoIP 数据库已就绪: $GEOIP_TARGET" \

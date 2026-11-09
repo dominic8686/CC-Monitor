@@ -1,7 +1,9 @@
-# CC-Monitor 是纯 Python 实现，没有编译步骤——这个 Makefile 只负责"装到系统里"：
-# 把 cc_monitor/ 包 + bin/ 脚本 + install.py 拷到 PREFIX 下，再在 PREFIX/bin 里建好命令行链接。
-# 是否要把 hooks 注册进 Claude Code 的 settings.json 是另一件事，见 `make install` 打印的提示，
-# 不在这里自动做——那是会改用户个人配置文件的操作，应该让用户自己明确执行。
+# CC-Monitor is pure Python with no build step; this Makefile only "installs it into the system":
+# it copies the cc_monitor/ package, the bin/ scripts and install.py under PREFIX, then creates the
+# command-line links in PREFIX/bin.
+# Registering the hooks in Claude Code's settings.json is a separate matter (see the note printed by
+# `make install`) and is not done automatically here: it changes the user's personal configuration
+# file, so the user should run it explicitly.
 PREFIX ?= /usr/local
 LIBDIR := $(PREFIX)/lib/cc-monitor
 BINDIR := $(PREFIX)/bin
@@ -19,14 +21,14 @@ install:
 	ln -sf "$(LIBDIR)/bin/CC-Monitor-hook" "$(BINDIR)/CC-Monitor-hook"
 	ln -sf "$(LIBDIR)/bin/CC-Monitor-probe" "$(BINDIR)/CC-Monitor-probe"
 	@echo ""
-	@echo "已安装到 $(LIBDIR)，命令行工具已链接到 $(BINDIR)（CC-Monitor / CC-Monitor-hook / CC-Monitor-probe）。"
+	@echo "Installed to $(LIBDIR); command-line tools linked into $(BINDIR) (CC-Monitor / CC-Monitor-hook / CC-Monitor-probe)."
 	@echo ""
-	@echo "还差最后一步——把 hooks 注册进 Claude Code 的 settings.json（这一步不会自动做）："
-	@echo "  $(PY) $(LIBDIR)/install.py                          # 全局安装：写入 ~/.claude/settings.json"
-	@echo "  $(PY) $(LIBDIR)/install.py --project /path/to/proj  # 只对某个项目生效"
+	@echo "One last step: register the hooks in Claude Code's settings.json (this is not done automatically):"
+	@echo "  $(PY) $(LIBDIR)/install.py                          # global install: writes ~/.claude/settings.json"
+	@echo "  $(PY) $(LIBDIR)/install.py --project /path/to/proj  # applies to one project only"
 
 uninstall:
 	rm -f "$(BINDIR)/CC-Monitor" "$(BINDIR)/CC-Monitor-hook" "$(BINDIR)/CC-Monitor-probe"
 	rm -rf "$(LIBDIR)"
-	@echo "已删除 $(LIBDIR) 和 $(BINDIR) 下的命令行链接。"
-	@echo "注意：~/.claude/settings.json 里已经注册的 hooks 条目不会自动清理，需要手动编辑删除。"
+	@echo "Removed $(LIBDIR) and the command-line links in $(BINDIR)."
+	@echo "Note: hook entries already registered in ~/.claude/settings.json are not cleaned up automatically; edit the file to remove them."

@@ -1,4 +1,4 @@
-"""终端 ANSI 配色，只在真终端里生效；重定向到文件或设了 NO_COLOR 时自动关闭。"""
+"""Terminal ANSI colours. Active only in a real terminal; turned off automatically when output is redirected to a file or NO_COLOR is set."""
 import os
 import sys
 
@@ -39,7 +39,7 @@ ENABLED = _supports_color(sys.stdout)
 
 
 def c(text, color=None, bold=False, dim=False):
-    """给文本包一层 ANSI 颜色码；颜色关闭时原样返回。"""
+    """Wrap text in ANSI colour codes; return it unchanged when colour is off."""
     if not ENABLED or not text:
         return text
     prefix = ""

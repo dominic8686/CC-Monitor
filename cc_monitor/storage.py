@@ -21,15 +21,18 @@ CREATE TABLE IF NOT EXISTS events (
     detail TEXT
 );
 
--- action=confirm 的操作既可以在触发它的那个终端里直接按 y/N，也可以在 Web UI 的
--- "待批准"页面点按钮——两条路谁先写进这张表、谁的结果就算数（status 从 'pending'
--- 变成别的值之后，另一条路的 UPDATE 因为 WHERE status='pending' 不成立而不会生效）。
--- kind='confirm' 是原来那种"是否允许执行"的确认框——网页/终端两条路谁先给结果
--- 算谁的。kind='notify' 是后来加的："Claude Code 在问用户一个澄清性问题"这类
--- 压根没有 allow/deny 语义的交互（AskUserQuestion 之类）：hook 只是把它记下来
--- 给网页看"现在有个问题在等你"，从不阻塞、从不弹确认框，答案只能在触发它的那个
--- 终端里给（我们没有、也不该去帮用户瞎选一个选项）——对应的 PostToolUse 事件一来
--- 就会把这条记录标成"已回答"，自动从"待处理"里消失。
+-- An action=confirm operation can be answered with y/N in the terminal that triggered it, or
+-- with a button on the Web UI "pending approval" page. Whichever path writes to this table first
+-- wins (once status changes from 'pending', the other path's UPDATE has no effect because
+-- WHERE status='pending' no longer holds).
+-- kind='confirm' is the original "allow this to run?" confirmation prompt; whichever of the web
+-- page and terminal answers first wins. kind='notify' was added later for interactions with no
+-- allow/deny meaning at all, where Claude Code asks the user a clarifying question
+-- (AskUserQuestion and the like). The hook only records it so the web page can show "a question
+-- is waiting for you"; it never blocks and never shows a confirmation prompt. The answer can only
+-- be given in the terminal that triggered it (we do not, and should not, pick an option for the
+-- user). When the matching PostToolUse event arrives, the record is marked answered and drops out
+-- of the pending list automatically.
 CREATE TABLE IF NOT EXISTS pending_approvals (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts TEXT NOT NULL,
@@ -46,10 +49,11 @@ CREATE TABLE IF NOT EXISTS pending_approvals (
     resolved_value TEXT
 );
 
--- "一直允许"是按 session 生效的，不是改全局规则——同一个 session 里这条规则
--- 以后不用再问，别的 session（哪怕跑一模一样的命令）还是照常问。expires_at 为空
--- 表示真的"一直"；有值的话是"批准，N 分钟内不再询问"这种限时版本，到点之后
--- is_session_always_allowed() 就不再认它，恢复正常询问。
+-- "Always allow" applies per session; it does not change the global rules. Within the same
+-- session this rule is not asked again; other sessions (even running the exact same command)
+-- are still asked. An empty expires_at means truly "always"; a value means a timed version
+-- ("approve and do not ask again for N minutes"), after which is_session_always_allowed() stops
+-- honouring it and normal prompting resumes.
 CREATE TABLE IF NOT EXISTS session_always_allow (
     session_id TEXT NOT NULL,
     matched_rule TEXT NOT NULL,
@@ -58,13 +62,15 @@ CREATE TABLE IF NOT EXISTS session_always_allow (
     PRIMARY KEY (session_id, matched_rule)
 );
 
--- 按 (ip, port) 聚合的流量统计——来自系统层探针新增的 tcp_sendmsg/tcp_cleanup_rbuf
--- 内核探点，每 2 秒汇总一次字节数累加进来。跟 events 表里 source='os_net' 的单条
--- CONNECT 记录是互补关系：那边是"什么时候连过这个地址"的时间线，这张表是"总共
--- 传了多少字节"的累计值，只有装了 bpftrace、探针在跑的时候才会有数据。
--- 键值表，目前只有一个键：rules_fingerprint——上一次用哪份规则表把历史事件重判过
--- （见 rematch.py）。hook 每次调用拿当前规则指纹跟它比，不一样就说明规则改过、
--- 历史事件的 matched_rule 已经过时，后台起一个 rematch 进程重判。
+-- Traffic totals aggregated by (ip, port), from the tcp_sendmsg/tcp_cleanup_rbuf kernel probe
+-- points added to the system-layer probe; byte counts are summed in every 2 seconds. This
+-- complements the single CONNECT records with source='os_net' in the events table: those are a
+-- timeline of "when was this address contacted", this table is the running total of "how many
+-- bytes were transferred". It only has data when bpftrace is installed and the probe is running.
+-- Key-value table with a single key for now: rules_fingerprint, the rule set last used to
+-- re-evaluate past events (see rematch.py). On every call the hook compares the current rules
+-- fingerprint with it; if they differ, the rules changed and matched_rule on past events is out
+-- of date, so a background rematch process re-evaluates them.
 CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY,
     value TEXT
@@ -88,25 +94,25 @@ def _connect():
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(DB_PATH), timeout=5)
     conn.execute("PRAGMA journal_mode=WAL;")
-    # SCHEMA 现在是好几条 CREATE TABLE 拼在一起的——sqlite3.Connection.execute()
-    # 一次只能跑一条语句，多条得用 executescript()。
+    # SCHEMA is now several CREATE TABLE statements joined together. sqlite3.Connection.execute()
+    # runs only one statement at a time; several need executescript().
     conn.executescript(SCHEMA)
     try:
         conn.execute("ALTER TABLE events ADD COLUMN transcript_path TEXT")
     except sqlite3.OperationalError:
-        pass  # 列已经存在（老数据库升级过一次之后）
+        pass  # column already exists (the old database was upgraded once already)
     try:
         conn.execute("ALTER TABLE session_always_allow ADD COLUMN expires_at TEXT")
     except sqlite3.OperationalError:
-        pass  # 列已经存在（老数据库升级过一次之后）
+        pass  # column already exists (the old database was upgraded once already)
     try:
         conn.execute("ALTER TABLE pending_approvals ADD COLUMN kind TEXT NOT NULL DEFAULT 'confirm'")
     except sqlite3.OperationalError:
-        pass  # 列已经存在（老数据库升级过一次之后）
+        pass  # column already exists (the old database was upgraded once already)
     try:
         conn.execute("ALTER TABLE pending_approvals ADD COLUMN resolved_value TEXT")
     except sqlite3.OperationalError:
-        pass  # 列已经存在（老数据库升级过一次之后）
+        pass  # column already exists (the old database was upgraded once already)
     return conn
 
 
@@ -136,9 +142,9 @@ def log_event(session_id, source, tool_name, detail, cwd, risk, matched_rule, de
 
 
 def iter_hook_pre_events():
-    """按 id 升序把所有 PreToolUse 事件吐出来：(id, tool_name, risk, matched_rule, detail, cwd)。
-    给 rematch 用——规则改了以后用当前规则把历史事件重新判一遍（cwd 是 workdir 类
-    规则重判时要用的）。"""
+    """Yield every PreToolUse event in ascending id order: (id, tool_name, risk, matched_rule, detail, cwd).
+    Used by rematch to re-evaluate past events with the current rules after the rules change
+    (cwd is needed to re-evaluate workdir rules)."""
     conn = _connect()
     try:
         rows = conn.execute(
@@ -150,8 +156,9 @@ def iter_hook_pre_events():
 
 
 def update_event_matches(updates):
-    """批量改 (risk, matched_rule)：updates 是 [(risk, matched_rule, event_id), ...]。
-    只动这两列——decision 是当时真实发生的放行/拦截结果，重判不改写历史。"""
+    """Bulk-update (risk, matched_rule): updates is [(risk, matched_rule, event_id), ...].
+    Only these two columns change. decision is the real allow/block outcome at the time, and a
+    rematch does not rewrite history."""
     if not updates:
         return
     conn = _connect()
@@ -172,9 +179,10 @@ def get_meta(key):
 
 
 def claim_meta(key, value):
-    """把 meta[key] 设成 value；只有当它原来不是这个值时才算"认领成功"（返回 True）。
-    多个 hook 进程几乎同时发现规则变了，靠这条 upsert 的原子性保证只有一个去起
-    后台重判，其它的看到 rowcount=0 就当没事。"""
+    """Set meta[key] to value. The claim succeeds (returns True) only if it did not already hold
+    that value. When several hook processes notice a rule change at almost the same moment, the
+    atomic upsert ensures only one starts the background rematch; the others see rowcount=0 and
+    do nothing."""
     conn = _connect()
     try:
         with conn:
@@ -202,7 +210,7 @@ def get_latest_session_id():
 
 
 def get_transcript_path(session_id):
-    """返回某个 session 最近一次记录到的 transcript jsonl 路径（同一个 session 应该都是同一个文件）。"""
+    """Return the transcript jsonl path most recently recorded for a session (a session should always use the same file)."""
     conn = _connect()
     try:
         row = conn.execute(
@@ -217,7 +225,7 @@ def get_transcript_path(session_id):
 
 
 def fetch_recent(limit=50, since_id=0):
-    """按 id 升序返回 id > since_id 的事件，供 `tail` 之类的增量轮询使用。"""
+    """Return events with id > since_id in ascending id order, for incremental polling such as `tail`."""
     conn = _connect()
     try:
         cur = conn.execute(
@@ -231,7 +239,7 @@ def fetch_recent(limit=50, since_id=0):
 
 
 def fetch_last(limit=200):
-    """按 id 降序返回最近 N 条事件（最新的在前），供交叉验证等只关心"最近发生了什么"的场景使用。"""
+    """Return the last N events in descending id order (newest first), for uses such as the cross-check that only care about "what happened recently"."""
     conn = _connect()
     try:
         cur = conn.execute(
@@ -245,8 +253,9 @@ def fetch_last(limit=200):
 
 
 def fetch_by_rule_prefix(prefix, limit=200):
-    """按 id 降序返回 matched_rule 以 prefix 开头的 PreToolUse 事件（最新的在前），
-    字段顺序跟 fetch_recent 一致。`CC-Monitor workdir` 用它列跨工作目录的操作。"""
+    """Return PreToolUse events whose matched_rule starts with prefix, in descending id order
+    (newest first), with the same field order as fetch_recent. `CC-Monitor workdir` uses it to
+    list cross-workdir operations."""
     conn = _connect()
     try:
         cur = conn.execute(
@@ -276,16 +285,18 @@ def create_pending_approval(session_id, tool_name, cwd, matched_rule, matched_va
 
 
 def resolve_pending_notify(session_id, tool_name, tool_response=None):
-    """action='notify' 那类记录（比如 AskUserQuestion）没有 tty/网页两条路可 resolve——
-    唯一能"结束等待"的信号就是对应的 PostToolUse 事件真的来了（说明用户已经在触发它
-    的那个终端里选完了）。同一个 session 同一个工具短时间内理论上可能连续问好几次，
-    只挑最新的那条'pending'状态的记录标掉，不会把更早、可能是别的原因还没处理完的
-    记录也捎带手误标了。
+    """action='notify' records (AskUserQuestion, for example) cannot be resolved from the tty or the
+    web page. The only signal that the wait is over is the matching PostToolUse event actually
+    arriving (meaning the user finished choosing in the terminal that triggered it). In theory the
+    same tool in the same session may ask several times in quick succession, so only the newest
+    'pending' record is marked, and older records that may still be open for other reasons are not
+    marked by mistake.
 
-    tool_response（PostToolUse 自带的、这个工具调用真正的返回值）对 AskUserQuestion
-    来说带着 `answers`：{问题文本: 用户实际选的答案} ——原样存成 JSON 到 resolved_value，
-    这样"审批历史记录"里不止看得到当时问了什么（matched_value），也看得到用户到底
-    答了什么。其它工具/tool_response 里没有这个字段的话就留空，不是错误。
+    For AskUserQuestion, tool_response (the tool call's real return value, included with
+    PostToolUse) carries `answers`: {question text: the answer the user chose}. It is stored as JSON
+    in resolved_value unchanged, so the approval history shows not only what was asked
+    (matched_value) but also what the user answered. For other tools, or a tool_response without
+    this field, it stays empty; that is not an error.
     """
     resolved_value = None
     if isinstance(tool_response, dict):
@@ -317,11 +328,12 @@ def poll_approval_status(approval_id):
 
 
 def resolve_approval(approval_id, status, via):
-    """把一条待批准记录标成 status（allowed/denied/always_allowed/expired）。
+    """Mark a pending-approval record with status (allowed/denied/always_allowed/expired).
 
-    WHERE status='pending' 是关键：tty 和 Web UI 两条路可能同时想resolve 同一条，
-    谁的 UPDATE 先落地、changes 就是 1，另一条因为这时候 status 已经不是 pending
-    了，UPDATE 不会生效——不用额外加锁，SQLite 本身的事务隔离就够了。
+    WHERE status='pending' is the key: the tty and the Web UI may try to resolve the same record at
+    once. Whichever UPDATE lands first gets changes = 1; for the other, status is no longer pending,
+    so its UPDATE has no effect. No extra locking is needed; SQLite's own transaction isolation is
+    enough.
     """
     conn = _connect()
     try:
@@ -348,8 +360,9 @@ def is_session_always_allowed(session_id, matched_rule):
         if row is None:
             return False
         expires_at = row[0]
-        # expires_at 为空是真的"一直允许"；有值就是限时版本，字符串比较当前时间——
-        # 跟 events 表其它时间戳一样都用同一个 strftime 格式/时区，直接比就行。
+        # An empty expires_at means truly "always allow"; a value means the timed version, compared
+        # with the current time as a string. It uses the same strftime format and time zone as the
+        # other timestamps in the events table, so a direct comparison works.
         return expires_at is None or expires_at > time.strftime("%Y-%m-%dT%H:%M:%S%z")
     finally:
         conn.close()
@@ -369,9 +382,9 @@ def add_session_always_allow(session_id, matched_rule, expires_at=None):
 
 
 def record_network_connect(ip, port, host):
-    """CONNECT 事件（探针每次观测到新连接都调一次）：新地址就插入一行，见过的地址
-    就把 connect_count 加一、host/last_seen 更新一下（host 可能这次才反解析出来，
-    之前是 None 的话趁机补上）。
+    """CONNECT event (called each time the probe observes a new connection): insert a row for a
+    new address; for a known address, increment connect_count and update host/last_seen (host may
+    only now have been reverse-resolved, so fill it in if it was None before).
     """
     conn = _connect()
     try:
@@ -391,10 +404,10 @@ def record_network_connect(ip, port, host):
 
 
 def record_network_bytes(ip, port, tx_bytes=0, rx_bytes=0):
-    """字节数统计（探针每 2 秒汇总一次调用）：累加到已有的 tx/rx 总数上，不是覆盖。
-    可能是这个 (ip, port) 第一次在字节层面被观测到（比如 CONNECT 那行因为某些原因
-    没抓到，或者是同一个长连接反复收发），所以这里也用 INSERT OR UPDATE，不假设
-    行已经存在。
+    """Byte counts (called by the probe every 2 seconds with totals): added to the existing tx/rx
+    totals, not overwritten. This may be the first time this (ip, port) is seen at the byte level
+    (the CONNECT record was missed for some reason, or one long-lived connection keeps sending and
+    receiving), so this also uses INSERT OR UPDATE and does not assume the row exists.
     """
     conn = _connect()
     try:

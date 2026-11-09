@@ -1,8 +1,9 @@
-"""介入级别开关的回归测试：permissive 别名、落盘值的向后兼容、以及 hook 在观察模式下
-"照常判定和记录、但绝不拦截"的行为。
+"""Regression tests for the intervention level switch: the permissive alias, backward
+compatibility of the on-disk value, and the hook's "evaluate and record as usual, but never block"
+behaviour in Permissive (observe only) mode.
 
-直接跑：python3 -m unittest tests/test_audit_state.py
-用隔离的 CC_MONITOR_HOME，不碰 ~/.cc-monitor 里用户自己的状态和数据库。
+Run directly: python3 -m unittest tests/test_audit_state.py
+Uses an isolated CC_MONITOR_HOME and never touches the user's own state and database in ~/.cc-monitor.
 """
 import json
 import os
@@ -25,7 +26,7 @@ class TestStateAliases(unittest.TestCase):
             self.assertEqual(audit_state.normalize_state(s), s)
 
     def test_permissive_is_an_alias_of_paused(self):
-        # permissive 是这一档对外主推的名字，observe / log-only 是同义写法。
+        # permissive is the preferred public name for this level; observe / log-only are synonyms.
         for alias in ("permissive", "observe", "log-only", "log_only"):
             self.assertEqual(audit_state.normalize_state(alias), "paused")
 
@@ -45,8 +46,9 @@ class TestStateAliases(unittest.TestCase):
             audit_state.set_state("bogus")
 
     def test_disk_format_stays_backward_compatible(self):
-        """写 permissive，磁盘上必须还是 paused——老版本 CC-Monitor 和任何直接读这个
-        文件的脚本都按 running/paused/stopped 三个值解析，改名不能把它们弄坏。"""
+        """Writing permissive must still store paused on disk: older CC-Monitor versions and any
+        script that reads this file directly parse the three values running/paused/stopped, and
+        the rename must not break them."""
         audit_state.set_state("permissive")
         on_disk = json.loads(open(audit_state.STATE_FILE, encoding="utf-8").read())
         self.assertEqual(on_disk["state"], "paused")
@@ -54,7 +56,7 @@ class TestStateAliases(unittest.TestCase):
 
 
 def run_hook(payload):
-    """跑一次 PreToolUse hook，返回 (exit_code, stderr)。"""
+    """Run the PreToolUse hook once and return (exit_code, stderr)."""
     proc = subprocess.run(
         [sys.executable, "-m", "cc_monitor.hook", "pre"],
         input=json.dumps(payload),
@@ -67,12 +69,13 @@ def run_hook(payload):
 
 
 def open_test_db():
-    """连到本测试自己那份 events.db。
+    """Connect to this test's own events.db.
 
-    不能用 cc_monitor.storage 里的连接助手：它的 DB_PATH 是模块级常量，在 storage 首次
-    被 import 时就按当时的 CC_MONITOR_HOME 定死了。同一次 pytest 里 tests/ 下别的文件
-    也各自设了自己的 CC_MONITOR_HOME，谁先 import 谁说了算——依赖这个顺序的话，单独跑
-    能过、全量跑就会读到别人的库。这里按 _TMP 显式拼路径，跟 import 顺序无关。
+    The connection helper in cc_monitor.storage cannot be used: its DB_PATH is a module-level
+    constant fixed from CC_MONITOR_HOME when storage is first imported. In the same pytest run,
+    other files under tests/ set their own CC_MONITOR_HOME, and whichever imports first wins. Relying
+    on that order means the test passes alone but reads another test's database in a full run.
+    Here the path is built explicitly from _TMP, independent of import order.
     """
     import sqlite3
 
@@ -94,17 +97,17 @@ class TestPermissiveNeverBlocks(unittest.TestCase):
     def test_enforcing_blocks(self):
         audit_state.set_state("running")
         code, err = run_hook(DANGEROUS)
-        self.assertEqual(code, 2, "拦截中这一档必须真的拦下来")
-        self.assertIn("被拦截", err)
+        self.assertEqual(code, 2, "The Enforcing level must actually block")
+        self.assertIn("Operation blocked", err)
 
     def test_permissive_allows_but_still_records(self):
         audit_state.set_state("permissive")
         code, err = run_hook(DANGEROUS)
-        self.assertEqual(code, 0, "观察模式下绝不能拦截")
-        self.assertNotIn("被拦截", err)
+        self.assertEqual(code, 0, "Permissive mode must never block")
+        self.assertNotIn("Operation blocked", err)
 
-        # 关键点：放行了，但 risk / matched_rule 必须照常记下来，
-        # 否则这一档就退化成了"关闭"。
+        # The key point: it was allowed, but risk / matched_rule must still be recorded as usual;
+        # otherwise this level degrades into "Off".
         conn = open_test_db()
         row = conn.execute(
             "SELECT risk, matched_rule, decision FROM events "
@@ -112,20 +115,20 @@ class TestPermissiveNeverBlocks(unittest.TestCase):
             (DANGEROUS["session_id"],),
         ).fetchone()
         conn.close()
-        self.assertIsNotNone(row, "观察模式必须留下审计记录")
+        self.assertIsNotNone(row, "Permissive mode must leave an audit record")
         self.assertEqual(row[0], "high")
         self.assertEqual(row[1], "dangerous_delete")
         self.assertEqual(row[2], "allowed")
 
     def test_permissive_creates_no_pending_approvals(self):
-        """观察模式的承诺是"不弹确认框"——审批台里不能冒出待处理条目。"""
+        """Permissive mode promises "no confirmation prompts", so no pending entries may appear in AI Approvals."""
         conn = open_test_db()
         conn.execute("DELETE FROM pending_approvals")
         conn.commit()
         conn.close()
 
         audit_state.set_state("permissive")
-        # confirm 档的规则：网络搜索。正常模式下会问，观察模式下必须直接放行。
+        # A confirm rule: web search. Enforcing mode asks; Permissive mode must allow it directly.
         code, _ = run_hook({
             "tool_name": "WebSearch",
             "tool_input": {"query": "anything"},
@@ -137,7 +140,7 @@ class TestPermissiveNeverBlocks(unittest.TestCase):
         conn = open_test_db()
         n = conn.execute("SELECT count(*) FROM pending_approvals").fetchone()[0]
         conn.close()
-        self.assertEqual(n, 0, "观察模式下不能产生任何待确认条目")
+        self.assertEqual(n, 0, "Permissive mode must not create any pending confirmation entries")
 
 
 if __name__ == "__main__":

@@ -1,41 +1,47 @@
-"""跨工作目录行为检测：AI 这次工具调用碰的路径，是不是跑到了当前项目目录之外。
+"""Cross-workdir detection: does a path touched by this AI tool call lie outside the current project directory?
 
-default_rules.json 里的规则都是"对某个字段做正则"——正则看不见 hook 输入里的 cwd，
-判断不了"这个路径相对于当前项目在哪"。这个模块补的就是这一块：把一次工具调用里
-所有会被访问的文件系统路径抠出来（文件类工具直接看 file_path/path，Bash 要按子命令
-拆开逐个 token 认路径、跟踪 cd），解析成绝对路径，跟 cwd 比对，落在项目外的按位置
-分档：
+The rules in default_rules.json are all "a regex on some field", and a regex cannot see the cwd in the
+hook input, so it cannot tell where a path sits relative to the current project. This module fills that
+gap: it extracts every filesystem path a tool call will access (file tools: read file_path/path
+directly; Bash: split into subcommands, recognise paths token by token, track cd), resolves them to
+absolute paths, compares them with cwd, and sorts the ones outside the project into tiers by location:
 
-- homeDotfile   ：家目录下的隐藏文件/目录（~/.ssh、~/.aws、~/.config、~/.claude …），
-                  凭据和配置基本都住这里
-- otherUserHome ：别的用户的家目录（/home/<别人>、/Users/<别人>、/root）
-- system        ：系统目录（/etc、/usr、/var、/opt、/Library …）
-- otherProject  ：其它都算这档——家目录下别的项目、/data、/mnt 之类
+- homeDotfile   : hidden files/directories in the home directory (~/.ssh, ~/.aws, ~/.config, ~/.claude …),
+                  where credentials and configuration almost always live
+- otherUserHome : another user's home directory (/home/<other>, /Users/<other>, /root)
+- system        : system directories (/etc, /usr, /var, /opt, /Library …)
+- otherProject  : everything else: other projects under the home directory, /data, /mnt and so on
 
-再区分读/写：Write/Edit 类工具、rm/mv/cp 目标/tee/重定向 这些是写，其余是读。
-policy.evaluate() 里 match="workdir" 的规则拿这份结果按 scopes/access 过滤，命中就
-跟普通规则一样走 log/confirm/block。
+Each hit is also marked read or write: Write/Edit-type tools, rm/mv/cp targets, tee and redirections
+are writes; everything else is a read. Rules with match="workdir" in policy.evaluate() filter this
+result by scopes/access, and a hit then goes through log/confirm/block like any other rule.
 
-几个刻意不报的地方（报了全是噪音）：
-- "工作目录"按项目根算，不按 hook 给的 cwd 算：Claude Code 的 Bash 工具 cd 进子目录之后
-  hook 里的 cwd 也会跟着变成子目录（比如 proj/webui），这时候改 proj/README.md 明明还在
-  项目里。从 cwd 往上找 .git/.hg/.svn/CLAUDE.md/.claude 这些项目标记，取家目录之下
-  最靠上的那一层当项目根；一个标记都没有就还是用 cwd。
-- 临时目录（/tmp、/var/tmp、$TMPDIR、macOS 的 /private/var/folders）、/dev
-- 只读系统目录里的**读**（/usr、/lib*、/bin、/opt、/Library …）：跑程序、查共享库、看头文件
-  都是读这些地方，全报出来一天几百条；往这些地方**写**照样报。~/.cache 同理。
-- ~/.claude/projects（Claude Code 自己的会话记录/自动记忆/todo），那是它正常工作的一部分
-- 子命令的可执行文件本身在系统目录里（/usr/bin/python3 x.py 是在跑 python，不是在读它）
-- Claude Code 自己的 permissions.additionalDirectories（用户明确授权过的额外目录）
-- 规则里 ignore_paths 额外列出来的路径
+Places deliberately not reported (reporting them is pure noise):
+- The "working directory" is the project root, not the cwd the hook reports: after Claude Code's Bash
+  tool cds into a subdirectory, the cwd in the hook follows it (say proj/webui), yet editing
+  proj/README.md is still inside the project. We walk up from cwd looking for project markers such as
+  .git/.hg/.svn/CLAUDE.md/.claude and take the topmost marked level below the home directory as the
+  project root; with no marker at all we fall back to cwd.
+- Temporary directories (/tmp, /var/tmp, $TMPDIR, macOS /private/var/folders) and /dev.
+- **Reads** in read-only system directories (/usr, /lib*, /bin, /opt, /Library …): running programs,
+  loading shared libraries and reading headers all read these places, and reporting them would mean
+  hundreds of entries a day; **writes** there are still reported. Same for ~/.cache.
+- ~/.claude/projects (Claude Code's own session transcripts, auto-memory and todos); that is part of
+  its normal work.
+- A subcommand's executable itself living in a system directory (/usr/bin/python3 x.py runs python, it
+  does not read it).
+- Claude Code's own permissions.additionalDirectories (extra directories the user explicitly allowed).
+- Paths listed in a rule's ignore_paths.
 
-已知局限：
-- Claude Code 的 Bash 工具在多次调用之间会记住 shell 的 cwd，但 hook 只拿得到 Claude
-  Code 进程自己的 cwd（项目根）。同一条命令里的 `cd ../x && ...` 能跟踪，上一条命令 cd
-  出去、这一条再用相对路径的情况认不出来——不过那次 cd 本身已经被记下了。
-- 路径字面上在项目里就算项目里，不追符号链接（项目里解包出来的 rootfs 里 service ->
-  /etc/sv 这种链接，字面上是在读项目文件，追过去会把整棵树都误报成系统目录）；只有
-  字面上在项目外的路径才 realpath 一下再分档。
+Known limitations:
+- Claude Code's Bash tool remembers the shell cwd between calls, but the hook only sees the Claude Code
+  process's own cwd (the project root). `cd ../x && ...` within one command is tracked; a cd in an
+  earlier command followed by a relative path in this one is not recognised, though that cd itself was
+  already recorded.
+- A path that is literally inside the project counts as inside; symlinks are not followed (a service ->
+  /etc/sv link in a rootfs unpacked inside the project is literally a read of project files, and
+  following it would falsely flag the whole tree as system directories). Only paths literally outside
+  the project go through realpath before being tiered.
 """
 import json
 import os
@@ -63,25 +69,25 @@ SYSTEM_ROOTS = (
     "/System", "/Library", "/Applications", "/private", "/Network", "/Volumes",
 )
 USER_HOME_PARENTS = ("/home", "/Users")
-# 永远不报的路径前缀：临时目录、设备文件。$TMPDIR 在 _ignored_roots() 里动态加进来。
+# Path prefixes never reported: temporary directories and device files. $TMPDIR is added at runtime in _ignored_roots().
 DEFAULT_IGNORE = ("/tmp", "/var/tmp", "/private/tmp", "/private/var/folders", "/dev")
-# 家目录下永远不报的相对路径（对会话涉及的每个家目录都生效）
+# Paths under the home directory that are never reported (applies to every home directory the session involves)
 HOME_IGNORE = (".claude/projects",)
-# 只读系统目录：在这些地方"读"不报（跑程序/查库/看头文件），"写"照样按 system 档报
+# Read-only system directories: reads here are not reported (running programs, loading libraries, reading headers); writes are still reported as tier system
 SYSTEM_READ_QUIET = (
     "/usr", "/bin", "/sbin", "/lib", "/lib32", "/lib64", "/libx32", "/opt", "/snap", "/nix",
     "/System", "/Library", "/Applications",
 )
 HOME_READ_QUIET = (".cache",)
-# 项目根的标记：从 cwd 往上找，家目录之下最靠上的带标记的目录就是项目根
+# Project root markers: walking up from cwd, the topmost marked directory below the home directory is the project root
 PROJECT_MARKERS = (".git", ".hg", ".svn", "CLAUDE.md", ".claude")
 
-# 这些命令一旦带了路径参数，路径就是被改写的对象。
+# When these commands take path arguments, those paths are what gets modified.
 WRITE_ALL_CMDS = {
     "rm", "rmdir", "touch", "mkdir", "chmod", "chown", "chgrp", "truncate", "shred", "unlink", "tee",
     "dd", "patch", "chattr", "setfacl", "mkfifo", "mknod",
 }
-# 最后一个路径参数是目标（写），前面的是来源（读）。
+# The last path argument is the target (write); the earlier ones are sources (read).
 WRITE_LAST_CMDS = {"cp", "mv", "ln", "rsync", "install", "scp"}
 GIT_WRITE_LAST_SUBCMDS = {"clone", "init"}
 
@@ -119,9 +125,10 @@ def _norm(path):
 
 
 def _canon(path):
-    """比对用的归一化：能 realpath 就 realpath（cwd 是符号链接、目标也是符号链接的话
-    两边都解开才比得对），不存在的路径 realpath 也只是 normpath，不会抛。展示给人看
-    的仍然是 _norm() 的版本（/etc/os-release 不要变成 /usr/lib/os-release）。"""
+    """Normalisation for comparison: realpath when possible (if cwd and the target are both symlinks,
+    both must be resolved to compare correctly). For a path that does not exist realpath is just
+    normpath and does not raise. What people are shown is still the _norm() version
+    (/etc/os-release must not turn into /usr/lib/os-release)."""
     try:
         return os.path.realpath(path).rstrip("/") or "/"
     except (OSError, ValueError):
@@ -155,10 +162,12 @@ def _read_quiet_roots(homes):
 
 
 def project_root(cwd):
-    """从 cwd 往上找项目根：家目录之下（不含家目录本身、不含 /）最靠上的一层带
-    PROJECT_MARKERS 标记的目录。没有任何标记就返回 cwd 本身。
-    取最靠上而不是最近的一层：proj/webui 有 package.json 之类的子项目标记也好、
-    proj/.git 才是整个项目的边界，改 proj/README.md 不该算跨出去。"""
+    """Walk up from cwd to find the project root: the topmost directory below the home directory
+    (excluding the home directory itself and /) that carries a PROJECT_MARKERS marker. With no
+    marker at all, return cwd itself.
+    Topmost rather than nearest: proj/webui may have a subproject marker such as package.json, but
+    proj/.git is the boundary of the whole project, and editing proj/README.md must not count as
+    leaving it."""
     cwd = _norm(cwd)
     stop = set(_session_homes(cwd) + ["/"])
     best = None
@@ -179,8 +188,9 @@ def project_root(cwd):
 
 
 def _additional_directories(cwd):
-    """Claude Code 自己的 permissions.additionalDirectories（--add-dir 也写在这里）：
-    用户明确说过"这些目录也算工作区"，跟 cwd 一样对待。项目级 + 用户级三个文件都看。"""
+    """Claude Code's own permissions.additionalDirectories (--add-dir is stored here too): the user
+    has explicitly said "these directories are part of the workspace", so treat them like cwd. Reads
+    all three files, project-level and user-level."""
     home = _home()
     candidates = [
         os.path.join(cwd, ".claude", "settings.local.json"),
@@ -202,9 +212,10 @@ def _additional_directories(cwd):
 
 
 def _session_homes(cwd):
-    """这个会话算"自己家"的目录：进程的 HOME，加上 cwd 所在的那个用户家目录。
-    两者通常是同一个；不同的典型场景是 claude 用 root 跑、项目却放在 /home/<user>
-    下——这时 /home/<user>/other-proj 是"别的项目"，不是"别的用户的家"。"""
+    """The directories this session counts as its "own home": the process's HOME, plus the user home
+    directory that contains cwd. Usually they are the same; the typical case where they differ is
+    claude running as root with the project under /home/<user>. Then /home/<user>/other-proj is
+    "another project", not "another user's home directory"."""
     homes = [_home()]
     for parent in USER_HOME_PARENTS:
         if _under(cwd, parent) and cwd != parent:
@@ -217,7 +228,7 @@ def _session_homes(cwd):
 
 
 def classify(path, cwd, allowed_roots=(), ignored_roots=None, homes=None):
-    """返回 path（已归一化的绝对路径）相对于 cwd 的档位；在工作区内/被忽略返回 None。"""
+    """Return the tier of path (a normalised absolute path) relative to cwd; None if it is inside the workspace or ignored."""
     if _under(path, cwd):
         return None
     for root in allowed_roots:
@@ -246,7 +257,7 @@ def classify(path, cwd, allowed_roots=(), ignored_roots=None, homes=None):
 
 
 def _expand(token, cwd, shell_cwd):
-    """把一个 token 变成绝对路径；认不出是路径就返回 None。"""
+    """Turn a token into an absolute path; return None if it is not recognisable as a path."""
     if not token or "\n" in token or "\t" in token or " " in token:
         return None
     if "://" in token:
@@ -260,7 +271,7 @@ def _expand(token, cwd, shell_cwd):
         if token.startswith("~"):
             return None
     elif token.startswith("$"):
-        return None  # 其它变量解析不了
+        return None  # other variables cannot be resolved
     if token.startswith("/"):
         return _norm(token)
     if token in (".", "..") or token.startswith(("./", "../")) or "/" in token:
@@ -288,8 +299,8 @@ def _tokens(seg):
 
 
 def _iter_segments(command, depth=0):
-    """按顶层 ; & | 换行 切子命令，bash -c "..." 里的再递归拆一层。复用 policy 的切分器。"""
-    from . import policy  # 延迟导入：policy 在模块顶层 import 了这个模块
+    """Split into subcommands at top-level ; & | and newlines, recursing one level into bash -c "...". Reuses policy's splitter."""
+    from . import policy  # deferred import: policy imports this module at module top level
 
     for raw in policy.split_shell_segments(command):
         head = policy._normalize_head(raw)
@@ -305,8 +316,8 @@ def _iter_segments(command, depth=0):
 
 
 def _bash_paths(command, cwd):
-    """返回 [(abs_path, access, is_exec)]，按出现顺序；同一条命令里 cd 出去之后，后面的
-    相对路径按新目录解析。"""
+    """Return [(abs_path, access, is_exec)] in order of appearance; after a cd within the same
+    command, later relative paths are resolved against the new directory."""
     out = []
     shell_cwd = cwd
     for seg in _iter_segments(command):
@@ -410,9 +421,10 @@ def _bash_paths(command, cwd):
             if p:
                 paths.append((p, a is last_positional))
 
-        # cp/mv/ln 这类"最后一个参数是目标"的命令：目标是最后一个非选项参数本身，不管它
-        # 长得像不像路径（`cp /etc/hosts hosts.bak` 的目标是 hosts.bak，不能因为它没带
-        # 斜杠就把 /etc/hosts 当成被写的那个）。
+        # For "last argument is the target" commands such as cp/mv/ln, the target is the last
+        # non-option argument itself, whether or not it looks like a path (the target of
+        # `cp /etc/hosts hosts.bak` is hosts.bak; /etc/hosts must not be taken as the written one
+        # just because hosts.bak has no slash).
         for p, is_last in paths:
             if write_all or (write_last and is_last):
                 out.append((p, ACCESS_WRITE, False))
@@ -422,17 +434,18 @@ def _bash_paths(command, cwd):
 
 
 def scan(tool_name, tool_input, cwd):
-    """返回这次工具调用里所有落在工作目录之外的路径：[Hit]，按首次出现顺序，同一路径
-    只留一条（写覆盖读）。cwd 为空/不是绝对路径时没法判断，返回 []。
-    规则自己的 ignore_paths 白名单不在这里处理——一次 evaluate 里几条 workdir 规则共用
-    同一份扫描结果，各自的白名单在 select() 里过滤。"""
+    """Return every path in this tool call that falls outside the working directory: [Hit], in order
+    of first appearance, one entry per path (write wins over read). If cwd is empty or not absolute
+    there is no way to judge, so return [].
+    A rule's own ignore_paths allowlist is not applied here: several workdir rules in one evaluate
+    share the same scan result, and each one's allowlist is filtered in select()."""
     if not cwd or not isinstance(cwd, str) or not cwd.startswith("/"):
         return []
     if not isinstance(tool_input, dict):
         return []
     cwd = _norm(cwd)
     homes = _session_homes(_canon(cwd))
-    # 相对路径按 hook 给的 cwd 解析（shell 真的在那里），"在不在项目里"按项目根判断
+    # Relative paths resolve against the cwd the hook reports (the shell really is there); "inside the project" is judged against the project root
     root = project_root(cwd)
     root_real = _canon(root)
     allowed = _additional_directories(cwd)
@@ -462,18 +475,20 @@ def scan(tool_name, tool_input, cwd):
     hits = {}
     order = []
     for path, access, is_exec in candidates:
-        # 先按字面路径判：在项目里 / 在忽略目录里就到此为止，不去 realpath——不然
-        # `ln -sf /usr/lib/x.so /tmp/build/x.so` 这种刚建的、指向系统目录的链接会被解析
-        # 成"往 /usr/lib 写"，其实写的是 /tmp。
+        # Judge the literal path first: inside the project or an ignored directory ends here, without
+        # realpath. Otherwise a freshly created link into a system directory, as in
+        # `ln -sf /usr/lib/x.so /tmp/build/x.so`, would resolve to "write to /usr/lib" when the write
+        # actually went to /tmp.
         if _under(path, root) or any(_under(path, r) for r in ignored):
             continue
         tier = classify(_canon(path), root_real, allowed_roots=allowed, ignored_roots=ignored, homes=homes)
         if tier is None:
             continue
         if is_exec and tier == TIER_SYSTEM:
-            continue  # /usr/bin/python3 这种是在跑系统里的程序，不算访问系统目录
-        # 只读系统目录/缓存目录里的读：跑程序、查库、看头文件，不算事。按字面路径判，不
-        # 追符号链接——/etc/os-release 软链到 /usr/lib/os-release，但字面在 /etc，该报还得报。
+            continue  # e.g. /usr/bin/python3 is running a system program, not accessing a system directory
+        # Reads in read-only system or cache directories (running programs, loading libraries,
+        # reading headers) are harmless. Judged on the literal path without following symlinks:
+        # /etc/os-release links to /usr/lib/os-release but is literally in /etc, so it is still reported.
         if access == ACCESS_READ and any(_under(path, r) for r in read_quiet):
             continue
         if path in hits:
@@ -486,16 +501,17 @@ def scan(tool_name, tool_input, cwd):
 
 
 def select(hits, scopes=None, access=None, ignore_paths=None):
-    """按规则里的 scopes（档位列表）、access（read/write/any）和 ignore_paths（额外白名单，
-    支持 ~）过滤 scan() 的结果。"""
+    """Filter scan() results by the rule's scopes (list of tiers), access (read/write/any) and
+    ignore_paths (extra allowlist, ~ supported)."""
     scopes = set(scopes) if scopes else set(ALL_TIERS)
     ignored = [_canon(os.path.expanduser(p)) for p in ignore_paths or () if isinstance(p, str) and p.strip()]
     return [
         h for h in hits
         if h.tier in scopes
         and (not access or access == "any" or h.access == access)
-        # 字面路径和 realpath 两个都比：ignore_paths 写的是 /etc，/etc/os-release 在
-        # 有些发行版上是指向 /usr/lib/os-release 的符号链接，只比 realpath 就漏了。
+        # Compare both the literal path and the realpath: ignore_paths says /etc, but on some
+        # distributions /etc/os-release is a symlink to /usr/lib/os-release, so comparing only the
+        # realpath would miss it.
         and not any(_under(h.path, root) or _under(_canon(h.path), root) for root in ignored)
     ]
 

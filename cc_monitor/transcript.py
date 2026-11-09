@@ -1,9 +1,10 @@
-"""Claude Tap：解析 Claude Code 本地写的 transcript (~/.claude/projects/.../<session>.jsonl)，
-把它实际发给模型 / 从模型收到的完整对话内容（文本、思考、工具调用、工具结果、token 用量）
-转成结构化的"轮次"数据，供 CLI (`CC-Monitor tap`) 和 Web UI 渲染。
+"""Claude Tap: parse the transcript Claude Code writes locally (~/.claude/projects/.../<session>.jsonl)
+and turn the full conversation it actually sent to and received from the model (text, thinking,
+tool calls, tool results, token usage) into structured "turn" data for the CLI (`CC-Monitor tap`)
+and the Web UI to render.
 
-这不是网络抓包/MITM——transcript 是 Claude Code 自己已经写在本地磁盘上的东西，
-本来就在这台机器上，不需要解密 TLS 流量。
+This is not packet capture or MITM: the transcript is something Claude Code already writes to the
+local disk. It is already on this machine, so no TLS traffic needs decrypting.
 """
 import json
 
@@ -33,8 +34,8 @@ def _normalize_content(content):
 
 
 def describe_entry(obj):
-    """把 transcript 里的一行原始 JSON 翻译成 {kind, ts, uuid, blocks, usage, model}，
-    不认识的行类型（summary/file-history-snapshot 等）返回 None，调用方直接跳过。"""
+    """Turn one raw JSON line from the transcript into {kind, ts, uuid, blocks, usage, model}.
+    Unknown line types (summary, file-history-snapshot, etc.) return None and the caller skips them."""
     etype = obj.get("type")
     ts = obj.get("timestamp")
     uuid = obj.get("uuid")
@@ -67,8 +68,9 @@ def describe_entry(obj):
 
 
 def read_entries(path, start_line=0, limit=500):
-    """从第 start_line 行（0-based，之前已经读过多少行）之后开始读，最多返回 limit 条解析结果。
-    返回 (entries, next_line)，next_line 交给下一次调用当 start_line 用，实现增量 tail。"""
+    """Read from line start_line on (0-based: the number of lines already read) and return at most
+    limit parsed entries. Returns (entries, next_line); pass next_line as start_line on the next call
+    for an incremental tail."""
     entries = []
     next_line = start_line
     try:
@@ -94,12 +96,12 @@ def read_entries(path, start_line=0, limit=500):
     return entries, next_line
 
 
-KIND_LABEL = {"user": "用户", "assistant": "Claude", "system": "系统"}
+KIND_LABEL = {"user": "User", "assistant": "Claude", "system": "System"}
 KIND_COLOR = {"user": "cyan", "assistant": "green", "system": "gray"}
 
 
 def render_entry_cli(entry):
-    """把一条 entry 渲染成若干行终端文本（带 ANSI 颜色），供 `CC-Monitor tap` 打印。"""
+    """Render one entry as terminal text lines (with ANSI colours) for `CC-Monitor tap` to print."""
     kind = entry["kind"]
     lines = []
     header = "[{}] {}".format(
@@ -129,12 +131,12 @@ def _render_block_cli(block):
             out.append("  " + fmt._collapse(text, 600))
     elif btype == "thinking":
         text = (block.get("thinking") or "").strip()
-        shown = text[:300] if text else "(内容已省略)"
-        out.append("  " + col.c("💭 思考: ", dim=True) + col.c(shown, dim=True))
+        shown = text[:300] if text else "(content omitted)"
+        out.append("  " + col.c("💭 Thinking: ", dim=True) + col.c(shown, dim=True))
     elif btype == "tool_use":
         name = block.get("name", "?")
         inp = block.get("input", {}) or {}
-        prefix = col.c("🔧 调用 {}: ".format(name), color="blue", bold=True)
+        prefix = col.c("🔧 Call {}: ".format(name), color="blue", bold=True)
         if name == "Bash" and "command" in inp:
             out.append("  " + prefix + fmt._highlight_bash(fmt._collapse(inp.get("command", ""), 300)))
         else:
@@ -145,13 +147,13 @@ def _render_block_cli(block):
         is_error = bool(block.get("is_error"))
         rendered = fmt._highlight_log(fmt._collapse(text, 400))
         prefix = (
-            col.c("✗ 工具结果(错误): ", color="bright_red", bold=True)
+            col.c("✗ Tool result (error): ", color="bright_red", bold=True)
             if is_error
-            else col.c("✓ 工具结果: ", color="green")
+            else col.c("✓ Tool result: ", color="green")
         )
         out.append("  " + prefix + rendered)
     elif btype == "image":
-        out.append("  " + col.c("🖼 [图片内容，未显示]", dim=True))
+        out.append("  " + col.c("🖼 [image content, not shown]", dim=True))
     else:
         out.append("  " + col.c("[{}]".format(btype), dim=True))
     return out

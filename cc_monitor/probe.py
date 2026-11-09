@@ -1,10 +1,11 @@
-"""系统层探针（Linux / eBPF）。
+"""System-layer probe (Linux / eBPF).
 
-独立于 Claude Code 的 hooks，用 bpftrace 直接在内核层跟踪从 `claude` 进程派生出来的
-子进程树的 execve/connect。目的：交叉验证应用层 hooks 是否被绕过或篡改——
-hooks 是"自证清白"，这里是不依赖 Claude Code 配合的独立观察，因此必须以 root 运行。
+Independent of Claude Code's hooks: uses bpftrace to trace, directly in the kernel, execve/connect in
+the process tree spawned from the `claude` process. Purpose: cross-check whether the application-layer
+hooks were bypassed or tampered with. Hooks are self-reported; this is an independent observation
+that needs no cooperation from Claude Code, which is why it must run as root.
 
-用法: sudo python3 -m cc_monitor.probe   (或 sudo bin/CC-Monitor-probe)
+Usage: sudo python3 -m cc_monitor.probe   (or sudo bin/CC-Monitor-probe)
 """
 import json
 import re
@@ -20,18 +21,20 @@ from . import policy, storage
 
 BT_SCRIPT = Path(__file__).parent / "probe_linux.bt"
 
-# 顶层 shell 的 comm，用来判断一条 EXEC 是不是"入口命令"（可以跟 hook_pre 的
-# command 字段直接比对），而不是入口命令派生出的孙子进程（比如 bash -c 里
-# 又跑了 python/awk，这些天然是被批准的顶层命令的一部分，不需要单独告警）。
+# comm values of top-level shells. Used to tell whether an EXEC is an "entry command" (directly
+# comparable with the command field of hook_pre) rather than a grandchild spawned by one (say
+# python/awk run inside bash -c, which are naturally part of the approved top-level command and need
+# no separate alert).
 SHELL_COMMS = {"sh", "bash", "zsh", "dash", "ksh"}
 
-# Claude Code CLI 自身的基础设施调用（hook 执行本身、状态栏刷新、终端尺寸探测等）。
-# 这些是 CLI 内部实现细节，不是模型发起的工具操作，天然不会出现在 hook_pre 记录里，
-# 需要排除，否则每次工具调用都会产生几条误报。按需扩充这个列表。
+# The Claude Code CLI's own infrastructure calls (running hooks, status line refresh, terminal size
+# probing and so on). These are CLI implementation details, not tool operations the model started,
+# so they never appear in hook_pre records and must be excluded, or every tool call would produce a
+# few false positives. Extend this list as needed.
 INFRA_NOISE_PATTERNS = [
     re.compile(r"CC-Monitor-hook"),
-    re.compile(r"ccmon-hook"),  # 老版本改名前装过的 hook 路径，兼容一下
-    re.compile(r"aimon-hook"),  # 更早的项目名（AI-Monitor）留下的 hook 路径
+    re.compile(r"ccmon-hook"),  # hook path installed by old versions before the rename; kept for compatibility
+    re.compile(r"aimon-hook"),  # hook path left by the earlier project name (AI-Monitor)
     re.compile(r"open-island-hook\.js"),
     re.compile(r"ccstatusline"),
     re.compile(r"herdr-agent-state\.sh"),
@@ -39,7 +42,7 @@ INFRA_NOISE_PATTERNS = [
     re.compile(r"^stty -F \S+ size"),
 ]
 
-# 同一条命令在 hook 层和探针层出现的时间差在这个窗口内都算"对得上"。
+# The same command seen in the hook layer and the probe layer within this window counts as a match.
 CORRELATION_WINDOW_SEC = 15
 DNS_CACHE_TTL_SEC = 3600
 
@@ -62,7 +65,7 @@ def _reverse_dns(ip, cache={}):
 
 
 def _extract_shell_command(argv_line):
-    """从 `bash -c '<command>'` 这样的 argv 中把 <command> 抠出来，用于跟 hook 层比对。"""
+    """Extract <command> from an argv such as `bash -c '<command>'`, for comparison with the hook layer."""
     parts = argv_line.split(None, 1)
     if not parts:
         return None
@@ -80,27 +83,28 @@ _QUOTE_CHARS = str.maketrans("", "", "'\"")
 
 
 def _normalize(text):
-    """去掉所有引号字符。
+    """Remove every quote character.
 
-    shell 在把原始命令套进 `eval '<command>'` 包装脚本时，如果命令本身含单引号，
-    会转义成 `'"'"'` 这种序列（结束引号、转义一个引号、重新开引号）——纯粹是引号
-    记法上的变化，不影响命令的实际内容。比对前把两边的引号都剥掉，就不会被这种
-    转义差异搞出假阳性。
+    When the shell wraps the original command in an `eval '<command>'` script and the command itself
+    contains single quotes, they are escaped as `'"'"'` (close quote, escaped quote, reopen quote).
+    That only changes quote notation, not what the command does. Stripping quotes from both sides
+    before comparing keeps this escaping difference from producing false positives.
     """
     return text.translate(_QUOTE_CHARS)
 
 
 def _find_matching_hook_command(haystack_text, around_ts_epoch):
-    """检查最近的 hook_pre Bash 记录里，有没有哪一条的原始命令整段被包含在这次观测到
-    的 shell 调用文本里。
+    """Check whether any recent hook_pre Bash record has its original command contained, whole, in
+    the shell invocation text observed this time.
 
-    之所以反过来找"hook 记录是不是这段观测文本的子串"，是因为 Claude Code 的 Bash
-    工具经常会把用户命令包一层 shell 快照/eval 脚本再执行（比如
-    `zsh -c "source snapshot.sh && eval '<原始命令>' < /dev/null && ..."`），
-    所以探针看到的 argv 文本通常比 hook 记录的 command 字段更长、包着它。
+    The search runs the other way round ("is the hook record a substring of the observed text")
+    because Claude Code's Bash tool often wraps the user command in a shell snapshot/eval script
+    before running it (for example
+    `zsh -c "source snapshot.sh && eval '<original command>' < /dev/null && ..."`),
+    so the argv text the probe sees is usually longer than, and contains, the hook record's command field.
     """
     if not haystack_text:
-        return True  # 不是可比对的 shell -c 命令（比如 ps/awk 这类子进程），不参与比对
+        return True  # not a comparable shell -c command (e.g. child processes such as ps/awk); skip comparison
     haystack_norm = _normalize(haystack_text)
     rows = storage.fetch_last(limit=300)
     for row in rows:
@@ -128,8 +132,8 @@ DEDUP_WINDOW_SEC = 1.0
 
 
 def _already_seen(pid, argv_line, now):
-    """短时间内同一个 (pid, argv) 重复出现就跳过——常见于高频轮询类进程
-    （比如状态栏刷新）在极短时间内被内核复用了同一个 pid 号。"""
+    """Skip the same (pid, argv) repeated within a short time; common with high-frequency polling
+    processes (such as status line refresh) when the kernel reuses the same pid very quickly."""
     if len(_recent_exec_seen) > 5000:
         _recent_exec_seen.clear()
     key = (pid, argv_line)
@@ -154,7 +158,7 @@ def _handle_exec_line(fields):
         rule, matched_value = policy.evaluate("Bash", {"command": shell_cmd})
 
     risk = rule["risk"] if rule else ("high" if not matched else "info")
-    note = "命令与 hook 记录对不上，可能绕过了监测" if not matched else None
+    note = "Command does not match any hook record; monitoring may have been bypassed" if not matched else None
 
     storage.log_event(
         session_id="",
@@ -175,12 +179,12 @@ def _handle_exec_line(fields):
         decision="observed",
     )
     if not matched:
-        msg = "[CC-Monitor][probe] ⚠ 可能绕过监测: pid={} comm={} 命令未见于 hook 记录: {}".format(
+        msg = "[CC-Monitor][probe] ⚠ Suspected monitoring bypass: pid={} comm={} command not found in hook records: {}".format(
             pid, comm, (shell_cmd or argv_line)[:200]
         )
         print(col.c(msg, color="bright_red", bold=True), file=sys.stderr)
     elif rule:
-        msg = "[CC-Monitor][probe] [{}] pid={} comm={} 命中规则 {}: {}".format(
+        msg = "[CC-Monitor][probe] [{}] pid={} comm={} matched rule {}: {}".format(
             risk, pid, comm, rule["id"], shell_cmd[:200]
         )
         print(col.c(msg, color=col.RISK_COLOR.get(risk, "gray"), bold=(risk == "high")))
@@ -188,11 +192,11 @@ def _handle_exec_line(fields):
 
 def _handle_connect_line(fields):
     # CONNECT \t pid \t uid \t comm \t ip \t port \t dns_query_host
-    # dns_query_host 来自 uprobe:libc:getaddrinfo 抓到的、这个进程连接前实际问过的
-    # 域名（比如 "api.anthropic.com"）——比事后对 IP 做反向 DNS 靠谱得多：很多云厂商/
-    # CDN 出口 IP 根本没配 PTR 记录，反向解析永远拿不到域名，但这里在连接发生之前
-    # 就已经知道域名是什么了。反向 DNS 留着当兜底（万一没经过 getaddrinfo，比如
-    # 直接连 IP 字面量的场景）。
+    # dns_query_host is the domain this process actually looked up before connecting, captured by
+    # uprobe:libc:getaddrinfo (e.g. "api.anthropic.com"). Far more reliable than reverse DNS on the IP
+    # afterwards: many cloud/CDN egress IPs have no PTR record, so a reverse lookup never yields a
+    # domain, whereas here the domain is known before the connection happens. Reverse DNS stays as a
+    # fallback (in case getaddrinfo was not used, e.g. connecting to a literal IP).
     _tag, pid, uid, comm, ip, port, dns_query_host = fields
     host = dns_query_host or _reverse_dns(ip)
     target = "{} ({})".format(ip, host) if host else ip
@@ -207,14 +211,14 @@ def _handle_connect_line(fields):
         decision="observed",
     )
     storage.record_network_connect(ip, int(port), host)
-    msg = "[CC-Monitor][probe] 网络连接: pid={} comm={} -> {}:{}".format(
+    msg = "[CC-Monitor][probe] Network connection: pid={} comm={} -> {}:{}".format(
         pid, col.c(comm, color="cyan"), col.c(target, color="blue"), port
     )
     print(msg)
 
 
-# bpftrace 打印聚合 map 用的是自己的默认格式，不是我们自己拼的 tag\t字段 这一套，
-# 得单独用正则认——比如 `@tx_bytes[160.79.104.10, 443]: 725`。
+# bpftrace prints aggregate maps in its own default format, not our tag\tfields layout, so they
+# need their own regex, e.g. `@tx_bytes[160.79.104.10, 443]: 725`.
 _BYTES_MAP_LINE = re.compile(r"^@(tx_bytes|rx_bytes)\[([^,]+), (\d+)\]: (\d+)$")
 
 
@@ -232,16 +236,16 @@ def _handle_bytes_line(line):
 def run():
     if shutil.which("bpftrace") is None:
         print(
-            "错误: 未找到 bpftrace，请先安装（如 Debian/Ubuntu: apt install bpftrace）。"
-            "这个探针依赖 Linux 内核的 eBPF 子系统，macOS 上没有等价物，装不了也跑不起来。",
+            "Error: bpftrace not found. Install it first (e.g. Debian/Ubuntu: apt install bpftrace). "
+            "This probe relies on the Linux kernel's eBPF subsystem; macOS has no equivalent, so it cannot be installed or run there.",
             file=sys.stderr,
         )
         sys.exit(1)
     if not BT_SCRIPT.exists():
-        print("错误: 找不到探针脚本 {}".format(BT_SCRIPT), file=sys.stderr)
+        print("Error: probe script not found: {}".format(BT_SCRIPT), file=sys.stderr)
         sys.exit(1)
 
-    print(col.c("[CC-Monitor][probe] 启动系统层探针 (bpftrace)，跟踪 claude 进程树的 exec/connect...", color="cyan"))
+    print(col.c("[CC-Monitor][probe] Starting system-layer probe (bpftrace), tracing exec/connect in the claude process tree...", color="cyan"))
     proc = subprocess.Popen(
         ["bpftrace", str(BT_SCRIPT)],
         stdout=subprocess.PIPE,
@@ -250,20 +254,20 @@ def run():
         bufsize=1,
     )
     known_tags = {"READY", "EXEC", "CONNECT"}
-    pending = None  # 正在组装的一条记录（字段列表），最后一个字段可能横跨多行
+    pending = None  # record being assembled (list of fields); the last field may span several lines
 
     def flush(rec):
         if not rec:
             return
         try:
             if rec[0] == "READY":
-                print(col.c("[CC-Monitor][probe] 就绪", color="green"))
+                print(col.c("[CC-Monitor][probe] Ready", color="green"))
             elif rec[0] == "EXEC":
                 _handle_exec_line(rec)
             elif rec[0] == "CONNECT":
                 _handle_connect_line(rec)
-        except Exception as exc:  # 探针本身绝不能因为单条解析失败而退出
-            msg = "[CC-Monitor][probe] 解析事件出错: {} (记录: {})".format(exc, rec)
+        except Exception as exc:  # the probe must never exit because one record failed to parse
+            msg = "[CC-Monitor][probe] Error parsing event: {} (record: {})".format(exc, rec)
             print(col.c(msg, color="yellow"), file=sys.stderr)
 
     try:
@@ -271,10 +275,11 @@ def run():
             line = raw_line.rstrip("\n")
             if not line or line.startswith("Attaching"):
                 continue
-            # @tx_bytes[...]/@rx_bytes[...] 是 bpftrace 自己 print() 一个 map 时的
-            # 默认格式，没有 \t，跟 EXEC/CONNECT 那套 tag\t字段 的格式完全不是一回事——
-            # 必须在按 \t 切分、判断多行续接之前先认出来单独处理，不然会被误当成
-            # 正在组装的上一条 EXEC 记录的续行，把命令内容污染掉。
+            # @tx_bytes[...]/@rx_bytes[...] is bpftrace's own default format when print()ing a map:
+            # no \t, nothing like the tag\tfields layout of EXEC/CONNECT. It must be recognised
+            # and handled before splitting on \t and checking for multi-line continuation, or it
+            # would be taken as a continuation line of the EXEC record being assembled and corrupt
+            # the command text.
             if _handle_bytes_line(line):
                 continue
             fields = line.split("\t")
@@ -282,8 +287,9 @@ def run():
                 flush(pending)
                 pending = fields
             elif pending is not None:
-                # 命令本身带换行（比如多行脚本），bpftrace 会原样打印出来，
-                # 这里把它接回上一条记录的最后一个字段（argv/command），而不是当成新记录丢掉。
+                # The command itself contains newlines (e.g. a multi-line script) and bpftrace
+                # prints them as is; append the line to the last field (argv/command) of the previous
+                # record instead of dropping it as a new record.
                 pending[-1] = pending[-1] + "\n" + line
         flush(pending)
     except KeyboardInterrupt:
