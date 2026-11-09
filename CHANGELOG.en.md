@@ -7,6 +7,20 @@ This file records what shipped in each version of CC-Monitor. Loosely follows
 
 ## [Unreleased]
 
+### Changed
+- **English-first fork.** English is now the default Web UI language (the 中文 toggle still
+  switches to Chinese), and every remaining Chinese string outside the deliberate Chinese
+  resources has been translated: server-composed event labels, CLI and probe output, terminal
+  confirmation prompts and desktop notifications, API error messages, the installer and
+  `Makefile` messages, test names, and all inline comments and docstrings. Terminal prompts and
+  notifications now show a rule's `title_en` / `desc_en` and fall back to `title` / `desc` only
+  when the English text is missing. Kept in Chinese on purpose: the `zh` dictionary in
+  `webui/public/i18n.js`, the country-name table in `webui/lib/countryNamesZh.js`, the Chinese
+  `title` / `desc` fields in `cc_monitor/default_rules.json`, the Chinese half of the `say`
+  pairs in `install.sh` / `start.sh`, and the Chinese documents (`README.zh-CN.md`,
+  `CHANGELOG.md`, `DESIGN.md`, `SECURITY.md`). No rule semantics, JSON keys, database columns,
+  file paths or log fields changed.
+
 ### Added
 - **Web UI "Timeline" page: session activity visualization** — a more direct way than scrolling the
   log to see which session did what, when, and whether it worked.

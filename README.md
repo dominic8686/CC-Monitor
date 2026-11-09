@@ -357,9 +357,10 @@ node server.js          # listens on http://127.0.0.1:9999 by default, localhost
     files (a full CJK glyph set is 17–21MB each, which would make the first font switch
     painfully slow) — they're plain font-name references that only render correctly where
     the visitor's system already has a matching font installed.
-  - **Language toggle**: translation covers UI chrome (nav, buttons, titles, empty-state
-    hints, risk/operation/status labels) but not the data itself (raw command text, tool
-    output, transcript content). The risk/operation-type/status badges in the audit log use
+  - **Language toggle**: English is the default UI language; the EN / 中文 button in the top
+    bar switches to Chinese and the choice is kept in `localStorage`. Translation covers UI
+    chrome (nav, buttons, titles, empty-state hints, risk/operation/status labels) but not
+    the data itself (raw command text, tool output, transcript content). The risk/operation-type/status badges in the audit log use
     fixed, highly saturated colors that don't change with the theme; high-risk rows are shown
     in bold red.
 
@@ -707,7 +708,7 @@ and git-hooks/git-config persistence (`core.hooksPath`, `url....insteadOf`), and
 ## Development Progress
 
 For exactly what shipped in each version, see [CHANGELOG.en.md](./CHANGELOG.en.md)
-([中文](./CHANGELOG.md)).
+([Chinese](./CHANGELOG.md)).
 
 ### Implemented
 
