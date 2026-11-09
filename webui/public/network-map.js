@@ -1,30 +1,30 @@
 "use strict";
-// 世界地图流量可视化——参考 BeeEye 项目的 WorldMap.jsx 做法（同一个作者的项目之间互相
-// 借用，见 https://github.com/cn0xroot/BeeEye/blob/main/BeeEye-web/src/components/WorldMap.jsx）：
-// 不依赖任何地图瓦片服务/第三方地图 API（避免额外的网络依赖和数据泄露面），纯 WebGL2
-// 自己画：等距柱状投影（lon/lat 直接线性映射到 clip space），海岸线用本地打包的低精度
-// world.geo.json 画成线段，每个有流量的目的地画一个按流量大小/新鲜程度决定亮度的
-// 发光点，加一条从"本机（示意位置）"到目的地、带跑动光点的弧线，方向跟着这条连接
-// 上传/下载哪个字节数更多走（上传为主往外跑，下载为主往回跑，不知道方向的默认往外）。
-// WebGL2 不可用时（老浏览器、这台机器本身没有 GPU 加速、或者某些沙箱/远程会话）
-// 退化成 Canvas 2D 画同一套内容——地图不会因为拿不到 WebGL2 就整个消失。
+// World map traffic visualisation, modelled on WorldMap.jsx from the BeeEye project (projects by the same author
+// borrow from each other, see https://github.com/cn0xroot/BeeEye/blob/main/BeeEye-web/src/components/WorldMap.jsx).
+// It depends on no map tile service or third-party map API (avoiding extra network dependencies and data exposure) and draws
+// everything itself with WebGL2: equirectangular projection (lon/lat mapped linearly to clip space), coastlines from a locally bundled low-resolution
+// world.geo.json drawn as line segments, each destination with traffic drawn as a glowing point whose brightness depends on traffic volume/freshness,
+// plus an arc from "this machine (nominal position)" to the destination with a moving light dot, whose direction follows whichever of
+// upload/download bytes is larger on that connection (mostly upload runs outward, mostly download runs back, unknown direction defaults to outward).
+// When WebGL2 is unavailable (old browsers, no GPU acceleration on this machine, or some sandboxes/remote sessions)
+// it falls back to Canvas 2D drawing the same content, so the map does not vanish just because WebGL2 is missing.
 (function () {
   function project(lat, lon) {
     return [lon / 180, lat / 90];
   }
 
-  // "本机" 在这张图上没有真实地理位置可言（这是运行 Claude Code 的这台机器，不是
-  // 网络流量真正经过的公网出口，我们也没有另外发请求去问"我的公网 IP 在哪"——那样
-  // 等于把用户的真实位置又发给了第三方，违背这整个项目"不额外发请求给第三方"的
-  // 原则）。固定钉在 (0, 0)（南大西洋几内亚湾外海，俗称"Null Island"）——choose 这个
-  // 点纯粹是因为它明显不可能是任何人的真实位置，不会被误认成"这就是你的位置"。
+  // "This machine" has no real geographic position on this map (it is the machine running Claude Code, not
+  // the public egress the traffic actually goes through, and we do not send another request to ask "where is my public IP": that
+  // would hand the user's real location to a third party, against this whole project's principle of "no extra requests to third
+  // parties"). It is pinned at (0, 0) (off the Gulf of Guinea in the South Atlantic, known as "Null Island"); this
+  // point was chosen only because it is obviously nobody's real location and cannot be mistaken for "this is where you are".
   const ANCHOR = { lat: 0, lon: 0 };
-  const ARC_DURATION = 2.2; // 秒，光点跑完一趟弧线的时间，超过这个时间的弧线整条消失
-  const MAX_ARCS = 60; // 弧线数量上限，避免开着页面挂一整天堆积成一团乱线
+  const ARC_DURATION = 2.2; // seconds for a light dot to travel the arc once; arcs older than this disappear entirely
+  const MAX_ARCS = 60; // cap on the number of arcs, so a page left open all day does not pile up into a tangle of lines
 
-  // arc2d：从 a 到 b 的二次贝塞尔曲线，往两点连线中点偏纬度方向鼓一点（有大圆航线的
-  // 弧度感），每个顶点带一个 0..1 的 t（沿弧线的位置），返回展平的
-  // [lat,lon,t, lat,lon,t, ...]，跟 BeeEye 的同名函数完全一致。
+  // arc2d: a quadratic Bezier curve from a to b that bulges a little in the latitude direction at the midpoint (giving the
+  // curved feel of a great-circle route). Each vertex carries a t in 0..1 (position along the arc); returns the flattened
+  // [lat,lon,t, lat,lon,t, ...], exactly the same as BeeEye's function of the same name.
   function arc2d(aLat, aLon, bLat, bLon, steps = 40) {
     const out = [];
     const midLat = (aLat + bLat) / 2 + Math.min(40, Math.abs(aLon - bLon) * 0.25);
@@ -37,8 +37,8 @@
     return out;
   }
 
-  // 给定 arc2d() 产出的 [lat,lon,t, ...] 数据和一个 0..1 的头部进度，插值出头部当前
-  // 应该在的 (lat, lon)——画头部光点用，不是给 GPU 的，纯 JS 算。
+  // Given the [lat,lon,t, ...] data produced by arc2d() and a head progress in 0..1, interpolate the (lat, lon) where the head
+  // should currently be. Used to draw the head light dot; it is not for the GPU, plain JS computes it.
   function arcHeadLatLon(data, head) {
     const n = data.length / 3;
     const clamped = Math.max(0, Math.min(1, head));
@@ -51,9 +51,9 @@
     return [lat, lon];
   }
 
-  // 等距柱状投影天生是 2:1（经度跨 360°、纬度跨 180°），画布不一定正好是 2:1，
-  // 所以要在 clip space 里按画布实际宽高比再缩放一次，让经纬度的像素密度一致，
-  // 多出来的部分用留白（letterbox/pillarbox）而不是拉伸填满。
+  // The equirectangular projection is inherently 2:1 (longitude spans 360°, latitude 180°), but the canvas is not necessarily 2:1,
+  // so clip space is scaled again by the canvas's actual aspect ratio to keep pixel density equal in longitude and latitude,
+  // with the leftover area letterboxed/pillarboxed instead of stretched to fill.
   const VERT_POINT = `#version 300 es
 layout(location=0) in vec2 a_ll;
 layout(location=1) in float a_mag;
@@ -96,10 +96,10 @@ uniform float u_alpha;
 out vec4 outColor;
 void main() { outColor = vec4(u_col, u_alpha); }`;
 
-  // 弧线专用的一对着色器——跟上面 VERT_LINE/FRAG_LINE 的区别是每个顶点带一个沿弧线
-  // 位置的 t，片元着色器里拿 t 跟当前动画头位置 u_head 比距离，离得近就亮，实现
-  // "光点沿弧线跑"的效果；本体弧线本身也画一条很淡的底线，不是光点跑过去之后
-  // 什么都不剩。
+  // A pair of shaders just for arcs. Unlike VERT_LINE/FRAG_LINE above, each vertex carries a t for its position
+  // along the arc; the fragment shader compares t with the current animation head position u_head and lights up when close, giving
+  // the "light dot running along the arc" effect. The arc itself is also drawn as a very faint base line, so nothing
+  // is left blank after the dot has passed.
   const VERT_ARC = `#version 300 es
 layout(location=0) in vec2 a_ll;
 layout(location=1) in float a_t;
@@ -149,8 +149,8 @@ void main() {
     return p;
   }
 
-  // buildLandSegments：把 GeoJSON 多边形的每条边拆成 [lat,lon, lat,lon] 线段对，
-  // 用 GL_LINES（或 2D 路径下逐段 moveTo/lineTo）画出海岸线轮廓（不是填色的实心大陆）。
+  // buildLandSegments: splits each edge of the GeoJSON polygons into [lat,lon, lat,lon] segment pairs,
+  // drawn with GL_LINES (or segment by segment with moveTo/lineTo on the 2D path) as coastline outlines (not filled solid continents).
   function buildLandSegments(geojson) {
     const out = [];
     const addRing = (ring) => {
@@ -172,9 +172,9 @@ void main() {
     return new Float32Array(out);
   }
 
-  // 一条连接该往哪个方向跑光点：上传字节数更多就是"本机往外发"（本机→目的地），
-  // 下载字节数更多就是"从目的地往回拉"（目的地→本机）；两边都是 0（推断出来的目标，
-  // 没有真实字节数可言）或者打平，默认往外——跟 BeeEye 处理"方向未知"时的兜底一致。
+  // Which way the light dot runs on a connection: more upload bytes means "this machine sending out" (this machine → destination),
+  // more download bytes means "pulling back from the destination" (destination → this machine). If both are 0 (an inferred target
+  // with no real byte counts) or tied, default to outward, matching BeeEye's fallback for "direction unknown".
   function arcDirection(p) {
     const tx = p.txBytes || 0;
     const rx = p.rxBytes || 0;
@@ -203,7 +203,7 @@ void main() {
       this.ok = true;
       this.gl = gl;
       gl.enable(gl.BLEND);
-      gl.blendFunc(gl.SRC_ALPHA, gl.ONE); // additive：流量重叠的地方自然更亮
+      gl.blendFunc(gl.SRC_ALPHA, gl.ONE); // additive: where traffic overlaps it naturally gets brighter
 
       this.pointProg = makeProgram(gl, VERT_POINT, FRAG_POINT);
       this.lineProg = makeProgram(gl, VERT_LINE, FRAG_LINE);
@@ -214,17 +214,17 @@ void main() {
       this.pointBuf = gl.createBuffer();
       this.magBuf = gl.createBuffer();
       this.pointCount = 0;
-      // 推断出来的目标（命令文本解析+DNS，见 audit.js 的 commandNetworkHosts()）跟系统层
-      // 探针实测到的真实流量分开一套缓冲区/一次 drawArrays，用不同颜色画——不能跟真实
-      // 流量用同一种橙色，那样地图上完全看不出哪些点是"推断的、不保证真的连通"。
+      // Inferred targets (command text parsing + DNS, see commandNetworkHosts() in audit.js) get a separate buffer/drawArrays call
+      // from the real traffic measured by the system-layer probe, drawn in a different colour. They cannot use the same orange as real
+      // traffic, or the map would give no way to tell which points are "inferred, not guaranteed to have connected".
       this.pointBufInferred = gl.createBuffer();
       this.magBufInferred = gl.createBuffer();
       this.pointCountInferred = 0;
       this.arcBuf = gl.createBuffer();
-      // 光点头部——只给弧线本身调透明度（原来的做法）太弱，一条 1px 细线在加法混合下
-      // 肉眼基本看不出哪里更亮；改成额外在头部位置单独画一个跟目的地发光点同一套
-      // pointProg/FRAG_POINT 着色器的小圆点，视觉上才是真的"一个光点在跑"，不是"线
-      // 某处稍微亮一点"。
+      // Light dot head: only adjusting the arc's own opacity (the original approach) was too weak; a 1px thin line under additive blending
+      // shows no visible bright spot. Instead a small dot is drawn separately at the head position with the same
+      // pointProg/FRAG_POINT shaders as the destination glow points, so it really looks like "a light dot running", not "the line
+      // being slightly brighter somewhere".
       this.arcHeadBuf = gl.createBuffer();
     }
 
@@ -232,7 +232,7 @@ void main() {
       this.mode = "2d";
       this.ctx = this.canvas.getContext("2d");
       this.ok = !!this.ctx;
-      this.land2d = null; // Float32Array [lat,lon,lat,lon,...]，跟 GL 路径同一份数据
+      this.land2d = null; // Float32Array [lat,lon,lat,lon,...], same data as the GL path
       this.pointsReal = [];
       this.pointsInferred = [];
     }
@@ -248,7 +248,7 @@ void main() {
       }
       if (this.mode === "gl2") this.gl.viewport(0, 0, this.canvas.width, this.canvas.height);
       const canvasAspect = this.canvas.width / this.canvas.height;
-      const dataAspect = 2; // 经度 360° / 纬度 180°
+      const dataAspect = 2; // longitude 360° / latitude 180°
       this.scale = canvasAspect > dataAspect ? [dataAspect / canvasAspect, 1] : [1, canvasAspect / dataAspect];
       this.render();
     }
@@ -269,17 +269,17 @@ void main() {
         }
         this.render();
       } catch (e) {
-        // 世界地图轮廓文件加载失败不影响流量点位本身的展示，退化成"没有海岸线的散点图"
+        // If the world map outline file fails to load, the traffic points still show; it degrades to "a scatter plot without coastlines"
         this.landCount = 0;
         this.land2d = null;
       }
     }
 
-    // pairs: [{lat, lon, bytes, txBytes, rxBytes, inferred}]，按 bytes 归一化成 0..1
-    // 的亮度/大小；inferred:true 的点单独处理，好画成不同颜色。每次调用（对应一次
-    // 10 秒的轮询）都给当前列表里的每个目的地补一条新弧线——不是只在"第一次看到这个
-    // 目的地"时补，这样只要还有流量持续发生，地图就会一直有光点在跑，不会看一眼之后
-    // 就完全静止下来。
+    // pairs: [{lat, lon, bytes, txBytes, rxBytes, inferred}], normalised by bytes into 0..1
+    // brightness/size; points with inferred:true are handled separately so they can be drawn in a different colour. Every call (one per
+    // 10-second poll) adds a new arc for each destination in the current list, not only "the first time this
+    // destination is seen", so as long as traffic keeps happening there are always light dots running on the map, instead of it
+    // going completely still after one look.
     setData(pairs) {
       if (!this.ok) return;
       const maxBytes = Math.max(1, ...pairs.map((p) => p.bytes || 0));
@@ -328,10 +328,10 @@ void main() {
       this.render();
     }
 
-    // 持续跑的动画循环——只有这样弧线上的光点才能"动起来"：setData()/resize() 之类
-    // 触发的单次 render() 只是让新数据立刻能看见，光点跑动本身得每一帧都重新算一次
-    // u_head/头部位置。页面整个生命周期内常驻（这个组件不像 React 那样会被卸载），
-    // 用法上跟这个文件里其它 setInterval 轮询是一个道理——不用手动停。
+    // Continuously running animation loop: the only way the light dots on the arcs can "move". A single render() triggered
+    // by setData()/resize() and the like only makes new data visible immediately; the moving dot needs u_head/head position
+    // recomputed every frame. It stays resident for the page's whole lifetime (this component is not unmounted the way React components are),
+    // the same as the other setInterval polling in this file: no need to stop it manually.
     _startLoop() {
       if (!this.ok) return;
       const loop = () => {
@@ -366,10 +366,10 @@ void main() {
         gl.drawArrays(gl.LINES, 0, this.landCount);
       }
 
-      // 弧线——每条弧线的顶点数据都不一样（不同的起止点），逐条上传+画，条数本来就
-      // 封顶在 MAX_ARCS，开销可以接受。这条线本身只是淡淡的引导线，真正"看起来在跑"
-      // 的是下面单独画的头部光点——只给线本身调透明度（早期版本的做法）在 1px 细线 +
-      // 加法混合下肉眼基本分不出哪段更亮，实测截图确认过這一点。
+      // Arcs: every arc has different vertex data (different start and end points), so each is uploaded and drawn one by one; the count is
+      // already capped at MAX_ARCS, so the cost is acceptable. The line itself is only a faint guide line; what "looks like it is running"
+      // is the head light dot drawn separately below. Only adjusting the line's opacity (what early versions did) with a 1px thin line +
+      // additive blending makes it practically impossible to see which part is brighter; real screenshots confirmed this.
       const headPoints = [];
       if (this.arcs.length > 0) {
         gl.useProgram(this.arcProg);
@@ -390,10 +390,10 @@ void main() {
         }
       }
 
-      // 头部光点——复用目的地发光点同一套 pointProg/FRAG_POINT 着色器（柔和的径向
-      // 光晕），批量一次 drawArrays 画完所有还活着的弧线的头部，不是每条弧线单独一次
-      // draw call。mag 固定给一个比较亮的值（0.75），不跟目的地的流量大小挂钩——
-      // 这个点表示的是"光点跑到哪了"，不是"这个目的地流量有多大"，两件事不一样。
+      // Head light dots: reuse the same pointProg/FRAG_POINT shaders as the destination glow points (a soft radial
+      // halo), drawing the heads of all live arcs in one batched drawArrays, not one draw call
+      // per arc. mag is fixed at a fairly bright value (0.75), not tied to the destination's traffic volume:
+      // this dot shows "where the light dot has got to", not "how much traffic this destination has"; those are different things.
       if (headPoints.length > 0) {
         const verts = new Float32Array(headPoints.length * 2);
         headPoints.forEach(([lat, lon], i) => {
@@ -405,8 +405,8 @@ void main() {
         gl.bufferData(gl.ARRAY_BUFFER, verts, gl.DYNAMIC_DRAW);
         gl.enableVertexAttribArray(0);
         gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
-        // mag 是常量，不需要真的开一条 buffer——vertexAttrib1f 给禁用的属性数组供一个
-        // 常量值，省一次 bufferData。
+        // mag is a constant, so no real buffer is needed: vertexAttrib1f supplies a constant value for a disabled attribute array,
+        // saving a bufferData call.
         gl.disableVertexAttribArray(1);
         gl.vertexAttrib1f(1, 0.75);
         gl.uniform2f(gl.getUniformLocation(this.pointProg, "u_scale"), scale[0], scale[1]);
@@ -429,9 +429,9 @@ void main() {
         gl.drawArrays(gl.POINTS, 0, this.pointCount);
       }
 
-      // 推断出来的目标（命令文本解析，不是探针实测）单独一次 drawArrays，颜色换成
-      // 跟表格里 .dd-badge-inferred 徽章同一个琥珀色系，视觉上跟真实流量的橙色区分开，
-      // 不会让人误以为地图上每个点都是探针确认过的连接。
+      // Inferred targets (command text parsing, not measured by the probe) get their own drawArrays call, coloured in
+      // the same amber family as the .dd-badge-inferred badge in the table, visually distinct from the orange of real traffic,
+      // so nobody mistakes every point on the map for a probe-confirmed connection.
       if (this.pointCountInferred > 0) {
         gl.useProgram(this.pointProg);
         gl.bindBuffer(gl.ARRAY_BUFFER, this.pointBufInferred);
@@ -447,16 +447,16 @@ void main() {
       }
     }
 
-    // Canvas 2D 兜底路径——WebGL2 不可用时画同一套内容（网格线拿掉了，海岸线+弧线+
-    // 光点齐全），用 globalCompositeOperation='lighter' 模拟 GL 那边的加法混合
-    // （重叠的地方自然更亮）。挂着 requestAnimationFrame，跟 GL 路径一样持续动画。
+    // Canvas 2D fallback path: draws the same content when WebGL2 is unavailable (grid lines dropped, coastlines + arcs +
+    // light dots all present), using globalCompositeOperation='lighter' to mimic the additive blending on the GL side
+    // (overlaps naturally get brighter). Runs on requestAnimationFrame, animating continuously like the GL path.
     _render2D() {
       const ctx = this.ctx;
       const w = this.canvas.width;
       const h = this.canvas.height;
-      if (w <= 0 || h <= 0) return; // 还没布局好（首次绘制/resize 中间态），clientWidth 可能读到 0
+      if (w <= 0 || h <= 0) return; // not laid out yet (first draw / mid-resize), clientWidth may read as 0
       const scale = this.scale || [1, 1];
-      // 跟 GL 路径同一套投影+letterbox 缩放，只是最后再从 clip space [-1,1] 换算成像素。
+      // Same projection + letterbox scaling as the GL path, only converted from clip space [-1,1] to pixels at the end.
       const toPx = (lat, lon) => {
         const cx = (lon / 180) * scale[0];
         const cy = (lat / 90) * scale[1];
@@ -522,8 +522,8 @@ void main() {
         }
       };
       drawPoints(this.pointsReal, "rgba(242, 140, 64, 1)");
-      // 推断出来的目标换成跟 .dd-badge-inferred 徽章同一个琥珀色系，跟 GL 路径的
-      // u_col (1.0, 0.83, 0.47) 保持一致，两条渲染路径视觉效果对得上。
+      // Inferred targets use the same amber family as the .dd-badge-inferred badge, matching the GL path's
+      // u_col (1.0, 0.83, 0.47) so the two render paths look the same.
       drawPoints(this.pointsInferred, "rgba(255, 212, 120, 1)");
 
       ctx.globalAlpha = 1;

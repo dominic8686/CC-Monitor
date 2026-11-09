@@ -1,17 +1,17 @@
 "use strict";
-// 多 session 事件时间线：每个 session 一条泳道，横轴是共享的时间窗口，纵轴按最近
-// 活跃排列会话。每个时间桶画一根从底部往上长的柱子，颜色按桶内"最差风险"上色
-// （桶里只要有一条 high 就整根染红，不管另外 199 条是不是 info——风险不能被平均掉），
-// 柱子高度按这个桶的事件数相对"这条泳道自己最忙的桶"归一化，让安静的会话和吵闹的
-// 会话在同一张图里都能看出"忙不忙"的相对起伏，而不是安静的那条永远看起来是空的。
-// decision=blocked 的桶额外画一个不随事件数变化的高亮描边——不能让"1 个被拦截的
-// 操作"淹没在"这个桶还有很多别的事件"里。
+// Multi-session event timeline: one lane per session, the x axis is a shared time window, and sessions are ordered vertically by most
+// recent activity. Each time bucket draws a bar growing up from the bottom, coloured by the bucket's "worst risk"
+// (a single high event in the bucket turns the whole bar red, even if the other 199 are info: risk must not be averaged away).
+// Bar height is the bucket's event count normalised against "this lane's own busiest bucket", so quiet and noisy
+// sessions both show the relative ups and downs of "how busy" in the same chart, instead of the quiet one always looking empty.
+// Buckets with decision=blocked also get a highlighted outline that does not depend on event count: "1 blocked
+// operation" must not get lost in "this bucket has lots of other events".
 //
-// 画布本身不认 CSS 变量（fillStyle 不会展开 var(--x)，这个项目在别处已经踩过同样的
-// 坑，见 app.js 的 vitalColor() 那段注释）——颜色每次 render() 都从
-// getComputedStyle(document.documentElement) 现读，这样切主题之后下一次 render()
-// 自动跟着换，不用额外监听主题切换事件。跟 network-map.js 一样，是个不依赖任何
-// 第三方库、自己管生命周期的 vanilla 模块，靠 setData()/render() 跟外面通信。
+// The canvas does not understand CSS variables (fillStyle does not expand var(--x); this project has hit the same
+// pitfall elsewhere, see the comment on vitalColor() in app.js). Colours are read fresh from
+// getComputedStyle(document.documentElement) on every render(), so after a theme change the next render()
+// follows automatically, with no extra theme-change listener. Like network-map.js, this is a vanilla module with no
+// third-party libraries that manages its own lifecycle and talks to the outside through setData()/render().
 (function () {
   const LANE_HEIGHT = 30;
   const LABEL_WIDTH = 200;
@@ -20,7 +20,7 @@
   const HOUR = 60 * MIN;
   const DAY = 24 * HOUR;
 
-  // 刻度间隔按窗口长度挑，保证一屏大约 6~12 个刻度
+  // Tick interval is chosen from the window length, aiming for about 6–12 ticks per screen
   function tickStepFor(rangeMs) {
     if (rangeMs <= HOUR) return 10 * MIN;
     if (rangeMs <= 6 * HOUR) return HOUR;
@@ -28,8 +28,8 @@
     return DAY;
   }
 
-  // 刻度按本地时间对齐（整点/整 3 小时/零点），不是按 epoch 取整——否则非整点
-  // 时区（+05:30 之类）的刻度会落在奇怪的分钟上。
+  // Ticks align to local time (on the hour / every 3 hours / midnight), not rounded on the epoch; otherwise in time zones
+  // that are not whole hours (+05:30 and the like) ticks would land on odd minutes.
   function firstTick(startMs, stepMs) {
     const d = new Date(startMs);
     if (stepMs >= DAY) {
@@ -54,7 +54,7 @@
     const d = new Date(ms);
     if (stepMs >= DAY) return `${d.getMonth() + 1}/${d.getDate()}`;
     const hm = `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
-    // 跨零点的那个刻度带上日期，不然 24h 窗口里两个 "03:00" 分不清是哪天
+    // The tick that crosses midnight carries the date, otherwise two "03:00" in a 24h window are ambiguous about the day
     return d.getHours() === 0 && d.getMinutes() === 0 ? `${d.getMonth() + 1}/${d.getDate()}` : hm;
   }
 
@@ -106,8 +106,8 @@
       this.tooltipEl = tooltipEl;
       this.ctx = canvas.getContext("2d");
       this.data = null; // {rangeMinutes, bucketMs, now, lanes}
-      this.onLaneClick = null; // (sessionId) => void，由 app.js 挂上去跳到 Logs 页
-      // (lane, bucket|null, bucketMs) => html；由 app.js 提供带翻译的版本，这里只留个兜底
+      this.onLaneClick = null; // (sessionId) => void, attached by app.js to jump to the Logs page
+      // (lane, bucket|null, bucketMs) => html; app.js provides the translated version, this is only a fallback
       this.tooltipHtml = null;
       this._resize();
       window.addEventListener("resize", () => this._resize());
@@ -125,9 +125,9 @@
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
       const laneCount = this.data ? this.data.lanes.length : 0;
       const rect = this.canvas.parentElement.getBoundingClientRect();
-      // 页面切走时（.view 是 display:none）量出来宽度是 0——这时候要是照样改 canvas.width，
-      // 位图会缩成 1px 宽再被 CSS 拉伸，切回来之前看到的就是一片只有横线的空图。
-      // 隐藏时直接跳过，等下一次可见时的 setData()/resize 再量。
+      // When the page is switched away (.view is display:none) the measured width is 0. Setting canvas.width anyway would
+      // shrink the bitmap to 1px wide and then CSS would stretch it, so on switching back you would see an empty chart with only horizontal lines.
+      // When hidden, skip; the next setData()/resize while visible measures again.
       if (rect.width === 0) return;
       const cssHeight = AXIS_HEIGHT + Math.max(1, laneCount) * LANE_HEIGHT;
       this.canvas.style.height = cssHeight + "px";
@@ -141,9 +141,9 @@
       this.render();
     }
 
-    // 精确算法跟 render() 里把桶摆到 x 坐标上的公式必须完全对称，否则会出现
-    // "鼠标指哪儿、提示框却说另一个时间"的错位——两处都以"离现在几个桶"为准，
-    // 不用绝对索引，这样窗口切换（1h/6h/24h/7d）时公式不用跟着改。
+    // The exact calculation must mirror the formula in render() that places buckets on x, otherwise you get
+    // "the mouse points at one time but the tooltip says another". Both are based on "how many buckets from now",
+    // not absolute indexes, so switching windows (1h/6h/24h/7d) needs no change to the formula.
     _hitTest(ev) {
       const box = this.canvas.getBoundingClientRect();
       const x = ev.clientX - box.left;
@@ -225,8 +225,8 @@
       ctx.font = "11px -apple-system, system-ui, sans-serif";
       ctx.textBaseline = "middle";
 
-      // 时间轴：顶部刻度文字 + 贯穿所有泳道的淡竖线。时间 → x 的映射跟下面画柱子
-      // 用的"离现在几个桶"公式是同一个坐标系（窗口右端 = 当前桶的结束时刻）。
+      // Time axis: tick labels at the top + faint vertical lines across all lanes. The time → x mapping uses the same coordinate system
+      // as the "how many buckets from now" formula used to draw the bars below (right edge of the window = end of the current bucket).
       const rangeMs = bucketCount * bucketMs;
       const windowStart = alignedNow + bucketMs - rangeMs;
       const xOf = (ms) => plotX0 + ((ms - windowStart) / rangeMs) * plotW;
@@ -258,8 +258,8 @@
       lanes.forEach((lane, laneIndex) => {
         const y0 = AXIS_HEIGHT + laneIndex * LANE_HEIGHT;
 
-        // 🛑/⚠ 跟 app.js 的 sessionLabel()/#log-session-filter 用的是同一套视觉约定：
-        // 有真的被拦截过的操作用 🛑，只是疑似绕过 hook（没有拦截，但也不正常）用 ⚠。
+        // 🛑/⚠ follow the same visual convention as sessionLabel()/#log-session-filter in app.js:
+        // 🛑 for operations that were really blocked, ⚠ for only a suspected hook bypass (not blocked, but not normal either).
         const flag = lane.blockedCount > 0 ? " \u{1F6D1}" : lane.bypassCount > 0 ? " ⚠" : "";
         const folder = folderNameLocal(lane.cwd);
         const idPart = lane.sessionId.slice(0, 8);
@@ -281,7 +281,7 @@
         const laneMaxN = lane.buckets.reduce((m, b) => Math.max(m, b.n), 1);
         for (const b of lane.buckets) {
           const bucketIndexFromNow = Math.round((alignedNow - b.startMs) / bucketMs);
-          if (bucketIndexFromNow < 0 || bucketIndexFromNow >= bucketCount) continue; // 窗口外的桶（理论上不该有，防御性跳过）
+          if (bucketIndexFromNow < 0 || bucketIndexFromNow >= bucketCount) continue; // bucket outside the window (should not happen in theory, skipped defensively)
           const bx = plotX0 + (bucketCount - 1 - bucketIndexFromNow) * bucketW;
           const heightFrac = Math.max(0.14, Math.min(1, b.n / laneMaxN));
           const barH = Math.max(3, heightFrac * (LANE_HEIGHT - 6));

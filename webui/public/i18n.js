@@ -1,7 +1,7 @@
 "use strict";
-// 界面文案的中英字典。注意范围：只翻译"界面文案"（导航、按钮、标题、空状态提示等），
-// 不翻译"数据"——命令文本、工具输出、transcript 对话原文这些内容本来是什么语言就是什么语言，
-// 切换界面语言不会去改写它们。
+// Chinese/English dictionary for UI text. Scope: only "UI text" is translated (navigation, buttons,
+// titles, empty-state hints, etc.), never "data": command text, tool output and transcript content
+// stay in whatever language they were written in, and switching the UI language does not rewrite them.
 
 const I18N = {
   zh: {
@@ -1378,7 +1378,7 @@ const I18N = {
 
     "extra.result": "Result",
     "extra.output": "Output",
-    "extra.compactInstructions": "Custom compact instructions",
+    "extra.compactInstructions": "Custom compaction instructions",
 
     "theme.brand": "Brand",
     "theme.dark": "Dark",
@@ -1393,10 +1393,10 @@ const I18N = {
   },
 };
 
-let currentLang = localStorage.getItem("cc_monitor_lang") || "zh";
+let currentLang = localStorage.getItem("cc_monitor_lang") || "en";
 
 function t(key, vars) {
-  const dict = I18N[currentLang] || I18N.zh;
+  const dict = I18N[currentLang] || I18N.en;
   let s = dict[key] !== undefined ? dict[key] : (I18N.zh[key] !== undefined ? I18N.zh[key] : key);
   if (vars) {
     for (const [k, v] of Object.entries(vars)) {
@@ -1412,10 +1412,10 @@ function setLang(lang) {
   applyStaticI18n();
 }
 
-// 处理静态 HTML 里带 data-i18n / data-i18n-html / data-i18n-placeholder / data-i18n-title /
-// data-i18n-aria-label / data-i18n-tip 的元素。
-// data-i18n 用 textContent（安全，字典里的普通文案都走这个）；
-// data-i18n-html 用 innerHTML（只用于字典里明确需要行内标签的几条，比如 modal hint 里的 <code>）。
+// Handles static HTML elements carrying data-i18n / data-i18n-html / data-i18n-placeholder / data-i18n-title /
+// data-i18n-aria-label / data-i18n-tip.
+// data-i18n uses textContent (safe; all ordinary dictionary text goes this way);
+// data-i18n-html uses innerHTML (only for the few entries that really need inline tags, e.g. the <code> in a modal hint).
 function applyStaticI18n() {
   document.documentElement.lang = currentLang === "en" ? "en" : "zh-CN";
   document.querySelectorAll("[data-i18n]").forEach((el) => {
@@ -1430,12 +1430,12 @@ function applyStaticI18n() {
   document.querySelectorAll("[data-i18n-title]").forEach((el) => {
     el.setAttribute("title", t(el.getAttribute("data-i18n-title")));
   });
-  // 纯给读屏器的标签（比如介入级别那个 radiogroup），页面上不显示文字，所以不能用
-  // data-i18n（那个会写 textContent），得单独设 aria-label。
+  // Labels only for screen readers (e.g. the intervention level radiogroup) show no text on the page,
+  // so data-i18n (which writes textContent) cannot be used; set aria-label separately.
   document.querySelectorAll("[data-i18n-aria-label]").forEach((el) => {
     el.setAttribute("aria-label", t(el.getAttribute("data-i18n-aria-label")));
   });
-  // 首页 ⓘ 说明气泡：文案放进 data-tip，CSS 用 attr(data-tip) 画出来（见 style.css 的 .info-tip）
+  // Home ⓘ info bubbles: the text goes into data-tip and CSS draws it with attr(data-tip) (see .info-tip in style.css)
   document.querySelectorAll("[data-i18n-tip]").forEach((el) => {
     const text = t(el.getAttribute("data-i18n-tip"));
     el.setAttribute("data-tip", text);
@@ -1445,13 +1445,14 @@ function applyStaticI18n() {
   if (langBtn) langBtn.textContent = currentLang === "zh" ? "EN" : "中文";
 }
 
-// ---------- 主题 ----------
+// ---------- Theme ----------
 const THEMES = ["brand", "dark", "light", "dracula", "nord", "midnight", "ocean", "forest", "sunset", "rose"];
 let currentTheme = localStorage.getItem("cc_monitor_theme") || "brand";
 
-// 每个主题自己的 --accent 取值，抄自 style.css 里各个 :root[data-theme="..."] 块——
-// 纯粹给外观设置弹窗里的色块预览用，不切主题就不会真的应用这些颜色，跟 style.css
-// 里那份是两份独立的数据，改主题配色的话这里也要跟着改一下。
+// Each theme's own --accent value, copied from the :root[data-theme="..."] blocks in style.css.
+// Used only for the swatch previews in the appearance settings dialog; these colours are not applied
+// unless the theme is switched. It is a separate copy of the data in style.css, so when you change a
+// theme's colours, update this too.
 const THEME_ACCENT = {
   brand: "#4757e8", dark: "#4f8cff", light: "#2f6fed", dracula: "#bd93f9", nord: "#88c0d0",
   midnight: "#6366f1", ocean: "#0ea5e9", forest: "#22c55e", sunset: "#f97316", rose: "#ec4899",
@@ -1466,12 +1467,13 @@ function applyTheme(theme) {
   document.querySelectorAll(".theme-swatch").forEach((btn) => btn.classList.toggle("active", btn.dataset.theme === currentTheme));
 }
 
-// ---------- 界面字体/字号（外观设置弹窗） ----------
-// 这几个中文字体没有打包字体文件进项目（完整 CJK 字库一个 17~21MB，直接打包会让
-// 首次切字体的下载很慢），是纯字体名引用——访问者的系统/浏览器本地要真的装了这个
-// 字体才会生效，没装就退到后面的备选字体。同一台机器（或同一局域网内的 Linux
-// 机器）自己开浏览器访问的话，Windows 的"微软雅黑"/"宋体"、Mac 的"苹方"/"华文楷体"、
-// 以及这台 Linux 上已经装好的 AR PL UKai/UMing、Noto Sans/Serif CJK、霞鹜文楷都能命中。
+// ---------- UI font / font size (appearance settings dialog) ----------
+// These Chinese fonts are not bundled with the project (a full CJK font is 17-21 MB, and bundling it
+// would make the first font switch download very slowly); they are referenced by name only. The font
+// takes effect only if the visitor's system/browser actually has it installed; otherwise the later
+// fallbacks are used. When browsing from the same machine (or a Linux machine on the same LAN),
+// Windows' Microsoft YaHei / SimSun, Mac's PingFang / STKaiti, and the AR PL UKai/UMing,
+// Noto Sans/Serif CJK and LXGW WenKai already installed on this Linux box all match.
 const FONT_STACKS = {
   system: '"Inter", -apple-system, "Segoe UI", "Helvetica Neue", Arial, "LXGW WenKai", "霞鹜文楷", "楷体", "STKaiti", "Kaiti SC", KaiTi, "AR PL UKai CN", sans-serif',
   mono: 'Menlo, Consolas, "SF Mono", "JetBrains Mono", "LXGW WenKai", "霞鹜文楷", monospace',

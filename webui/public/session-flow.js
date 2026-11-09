@@ -1,11 +1,11 @@
 "use strict";
-// 单个会话的操作流程图（类似 IDA 的函数流程图）：自上而下，每一轮用户提问是一张
-// 标题卡，下面按时间顺序串起这一轮的操作卡；派生子 agent 的调用画成右侧虚线旁支。
-// 卡片是普通 DOM（方便放多行文字、高亮命令），连线是底下一层 SVG，整层用一个
-// transform 做平移缩放；左下角小地图、右下角缩放按钮。不依赖任何第三方库。
+// Operation flow chart for one session (like IDA's function flow graph): top to bottom, each user prompt turn is a
+// title card, with that turn's operation cards chained below it in time order; calls that spawn a subagent are drawn as a dashed side branch on the right.
+// Cards are plain DOM (easy to hold multiple lines of text and highlighted commands), edges are an SVG layer underneath, and the whole layer uses one
+// transform for pan and zoom; a minimap in the bottom-left corner, zoom buttons in the bottom-right. No third-party libraries.
 //
-// 数据来自 /api/session-flow（webui/lib/sessionFlow.js 组装），这里只管布局和交互。
-// 文案全部通过构造参数里的 text()/toolLabel() 取，模块本身不认识 i18n 字典。
+// Data comes from /api/session-flow (assembled by webui/lib/sessionFlow.js); this module only handles layout and interaction.
+// All text comes through the text()/toolLabel() constructor parameters; the module itself knows nothing about the i18n dictionary.
 (function () {
   const CARD_W = 300;
   const CARD_H = 88;
@@ -13,7 +13,7 @@
   const PROMPT_H = 104;
   const GAP_Y = 28;
   const TURN_GAP = 48;
-  const BRANCH_X = CARD_W / 2 + 60; // 旁支卡片的左边缘（相对主干中线）
+  const BRANCH_X = CARD_W / 2 + 60; // left edge of side branch cards (relative to the trunk centre line)
   const MIN_K = 0.15;
   const MAX_K = 2;
   const PAD = 60;
@@ -36,8 +36,8 @@
     const d = new Date(v);
     return `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
   }
-  // hook 写的时间戳只精确到秒（Python strftime），耗时天然是整秒——不显示小数/毫秒，
-  // 免得 "1.0s""0ms" 看起来像是精确测量
+  // Timestamps written by the hook are only accurate to the second (Python strftime), so durations are whole seconds by nature. No decimals/milliseconds are shown,
+  // so that "1.0s" or "0ms" does not look like a precise measurement
   function dur(msv) {
     if (msv === null || msv === undefined) return "";
     if (msv < 1000) return "<1s";
@@ -100,7 +100,7 @@
       window.addEventListener("resize", () => this._applyView());
     }
 
-    // ---------- 数据 / 布局 ----------
+    // ---------- Data / layout ----------
     setData(flow, { keepView = false } = {}) {
       const first = !this.flow || this.flow.sessionId !== flow.sessionId;
       if (first) {
@@ -145,8 +145,8 @@
         }
         for (const n of list) {
           if (n.branch) {
-            // 旁支放在"下一格"的高度（跟随后的主干卡片并排），连线从上一张主干卡片
-            // 右侧往右下方弯过去；连续派生多个子 agent 时在旁支列里往下叠
+            // The side branch sits at the height of the "next slot" (alongside the following trunk card); the edge curves from the right side of
+            // the previous trunk card down and to the right. Several subagents spawned in a row stack downward in the branch column
             const by = Math.max(y, branchBottom + GAP_Y / 2);
             const bnode = { key: "n" + n.id, kind: "op", x: BRANCH_X, y: by, w: CARD_W, h: CARD_H, data: n, turn };
             nodes.push(bnode);
@@ -176,7 +176,7 @@
       this.byKey = new Map(nodes.map((n) => [n.key, n]));
     }
 
-    // ---------- 渲染 ----------
+    // ---------- Rendering ----------
     _cardHtml(n) {
       const T = this.opts.text;
       if (n.kind === "turn") {
@@ -276,7 +276,7 @@
       this._drawMinimap();
     }
 
-    // ---------- 视图变换 ----------
+    // ---------- View transform ----------
     _applyView() {
       const { x, y, k } = this.view;
       this.stage.style.transform = `translate(${x}px, ${y}px) scale(${k})`;
@@ -300,7 +300,7 @@
       this._applyView();
     }
 
-    // 把世界坐标 (wx, wy)（stage 内像素）放到视口里 (ax, ay) 比例的位置
+    // Place world coordinates (wx, wy) (pixels inside the stage) at the (ax, ay) proportional position in the viewport
     _centerOn(wx, wy, ax = 0.5, ay = 0.5) {
       const r = this.vp.getBoundingClientRect();
       this.view.x = r.width * ax - wx * this.view.k;
@@ -308,7 +308,7 @@
       this._applyView();
     }
 
-    // 最新的操作在最下面：打开时默认看最后一轮
+    // Newest operations are at the bottom: on open, show the last turn by default
     scrollToEnd() {
       if (!this.layout || !this.layout.nodes.length) return this._applyView();
       this.view.k = 1;
@@ -318,7 +318,7 @@
       this._centerOn(0 - bbox.x0 + PAD, target.y - bbox.y0 + PAD, 0.5, 0.12);
     }
 
-    // 时间线上点了某个时间桶：高亮这段时间里的操作并定位到第一个
+    // A time bucket was clicked on the timeline: highlight the operations in that period and scroll to the first
     focusRange(startMs, endMs) {
       if (!this.flow) return;
       this.highlight.clear();
@@ -354,7 +354,7 @@
       }
     }
 
-    // ---------- 交互 ----------
+    // ---------- Interaction ----------
     _bindPointer() {
       let drag = null;
       this.vp.addEventListener("pointerdown", (ev) => {
@@ -379,7 +379,7 @@
         this.vp.classList.remove("flow-dragging");
         if (!d.moved) this._click(d.target);
       });
-      // 普通滚轮 = 平移（跟网页滚动手感一致），按住 Ctrl/⌘ 滚轮 = 以鼠标为中心缩放
+      // Plain wheel = pan (feels like scrolling a web page), Ctrl/⌘ + wheel = zoom centred on the mouse
       this.vp.addEventListener(
         "wheel",
         (ev) => {
@@ -426,8 +426,8 @@
       this.opts.onNodeClick && this.opts.onNodeClick(n.data, n.turn);
     }
 
-    // 折叠/展开后重新布局，但让被点的那张卡在屏幕上待在原位，不要整张图跳走。
-    // 展开的分组卡本身会被它的明细替换掉，这时锚到第一条明细上。
+    // Re-layout after collapse/expand, but keep the clicked card where it was on screen so the whole chart does not jump.
+    // An expanded group card is itself replaced by its details, so anchor to the first detail in that case.
     _relayoutKeeping(key, groupId) {
       const before = this.byKey.get(key);
       const bx = before ? before.x - this.layout.bbox.x0 : 0;
@@ -446,7 +446,7 @@
       this._applyView();
     }
 
-    // ---------- 小地图 ----------
+    // ---------- Minimap ----------
     _bindMinimap() {
       let down = false;
       const go = (ev) => {

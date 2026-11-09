@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -26,21 +26,21 @@
       <span data-i18n="brand.title">CC-Monitor</span>
     </div>
     <nav id="tabs">
-      <button class="tab-btn active" data-tab="home" data-i18n="nav.home">首页</button>
-      <button class="tab-btn" data-tab="status" data-i18n="nav.status">状态信息</button>
-      <button class="tab-btn" data-tab="network" data-i18n="nav.network">网络流量</button>
-      <button class="tab-btn" data-tab="terminal" data-i18n="nav.terminal">终端会话</button>
-      <button class="tab-btn" data-tab="approvals"><span data-i18n="nav.approvals">AI 审批台</span><span id="approvals-badge" class="nav-badge" hidden>0</span></button>
-      <button class="tab-btn" data-tab="logs" data-i18n="nav.logs">Log 审计</button>
-      <button class="tab-btn" data-tab="timeline" data-i18n="nav.timeline">操作时间线</button>
+      <button class="tab-btn active" data-tab="home" data-i18n="nav.home">Home</button>
+      <button class="tab-btn" data-tab="status" data-i18n="nav.status">Status</button>
+      <button class="tab-btn" data-tab="network" data-i18n="nav.network">Network</button>
+      <button class="tab-btn" data-tab="terminal" data-i18n="nav.terminal">Terminals</button>
+      <button class="tab-btn" data-tab="approvals"><span data-i18n="nav.approvals">AI Approvals</span><span id="approvals-badge" class="nav-badge" hidden>0</span></button>
+      <button class="tab-btn" data-tab="logs" data-i18n="nav.logs">Audit Log</button>
+      <button class="tab-btn" data-tab="timeline" data-i18n="nav.timeline">Timeline</button>
       <button class="tab-btn" data-tab="tap" data-i18n="nav.tap">Claude Tap</button>
-      <button class="tab-btn" data-tab="archives" data-i18n="nav.archives">历史数据</button>
+      <button class="tab-btn" data-tab="archives" data-i18n="nav.archives">History</button>
       <a class="tab-btn nav-external-link" href="https://github.com/cn0xroot/CC-Monitor" target="_blank" rel="noopener noreferrer" title="GitHub">GitHub ↗</a>
     </nav>
     <select id="theme-select" class="pill-select" title="Theme">
-      <option value="brand" data-i18n="theme.brand">标准配色</option>
-      <option value="dark" data-i18n="theme.dark">深色</option>
-      <option value="light" data-i18n="theme.light">浅色</option>
+      <option value="brand" data-i18n="theme.brand">Brand</option>
+      <option value="dark" data-i18n="theme.dark">Dark</option>
+      <option value="light" data-i18n="theme.light">Light</option>
       <option value="dracula" data-i18n="theme.dracula">Dracula</option>
       <option value="nord" data-i18n="theme.nord">Nord</option>
       <option value="midnight" data-i18n="theme.midnight">Midnight</option>
@@ -49,10 +49,10 @@
       <option value="sunset" data-i18n="theme.sunset">Sunset</option>
       <option value="rose" data-i18n="theme.rose">Rose</option>
     </select>
-    <button id="settings-btn" class="pill" type="button" data-i18n-title="settings.btnTitle" title="外观设置：主题/字体/字号">⚙</button>
-    <button id="lang-toggle-btn" class="pill" title="切换语言 / Switch language">EN</button>
-    <div id="audit-state-pill" class="pill audit-state-running" data-i18n-title="topbar.auditState.title" title="介入级别">● <span id="audit-state-text">拦截中</span></div>
-    <div id="gpu-status" class="pill" data-i18n-title="" title="终端渲染方式">检测渲染方式中…</div>
+    <button id="settings-btn" class="pill" type="button" data-i18n-title="settings.btnTitle" title="Appearance: theme / font / size">⚙</button>
+    <button id="lang-toggle-btn" class="pill" title="Switch language / 切换语言">中文</button>
+    <div id="audit-state-pill" class="pill audit-state-running" data-i18n-title="topbar.auditState.title" title="Intervention level">● <span id="audit-state-text">Enforcing</span></div>
+    <div id="gpu-status" class="pill" data-i18n-title="" title="Terminal renderer">Detecting renderer…</div>
     <div class="home-credit">Build with ❤️❤️❤️ By 0xroot</div>
   </header>
 
@@ -60,18 +60,19 @@
 
   <main id="views">
 
-    <!-- 首页：概览统计 -->
+    <!-- Home: overview statistics -->
     <section id="view-home" class="view active">
       <div id="identity-mismatch-banner" class="identity-warning" hidden></div>
 
-      <!-- 态势摘要：原来散在页面各处的"现在怎么样"五个数字收成顶部一条。
-           每张卡沿用 .card 的外观，但是横向排版（数字在左、说明在右），比统计卡片矮一截。 -->
+      <!-- Status summary: the five "how are things right now" numbers that used to be scattered around
+           the page, gathered into one strip at the top. Each card keeps the .card look but is laid out
+           horizontally (number left, caption right), a bit shorter than the stat cards. -->
       <div class="home-strip">
         <div class="card strip-card clickable" data-drilldown="claude-processes">
           <span class="strip-dot" id="strip-audit-dot"></span>
           <div class="strip-body">
             <div class="strip-title" id="strip-audit-text">-</div>
-            <div class="strip-cap"><span id="stat-identity-total">-</span> <span data-i18n="home.strip.processes">个 claude 进程</span> <span class="click-hint" data-i18n="home.card.clickHint">点击查看 ›</span></div>
+            <div class="strip-cap"><span id="stat-identity-total">-</span> <span data-i18n="home.strip.processes">claude process(es)</span> <span class="click-hint" data-i18n="home.card.clickHint">View details ›</span></div>
             <div id="identity-by-user" class="strip-users"></div>
           </div>
         </div>
@@ -79,70 +80,73 @@
           <div class="card-vital-badge" id="stat-sessions-vital" hidden></div>
           <div class="strip-num" id="stat-total-sessions">-</div>
           <div class="strip-body">
-            <div class="strip-title"><span data-i18n="home.strip.sessions">已监测会话</span><svg class="claude-mark" viewBox="0 0 24 24" role="img" aria-label="Claude Code"><title>Claude Code</title><defs><linearGradient id="claude-mark-grad" x1="2" y1="2" x2="22" y2="22" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#ff9d43"/><stop offset="1" stop-color="#ec5615"/></linearGradient></defs><path d="M12.00 9.60Q13.55 5.30 12.00 1.00Q10.45 5.30 12.00 9.60ZM13.30 9.98Q16.93 7.20 17.95 2.75Q14.32 5.53 13.30 9.98ZM14.18 11.00Q18.74 10.63 22.01 7.43Q17.45 7.81 14.18 11.00ZM14.38 12.34Q18.41 14.49 22.89 13.57Q18.85 11.42 14.38 12.34ZM13.81 13.57Q16.05 17.56 20.31 19.20Q18.08 15.22 13.81 13.57ZM12.68 14.30Q12.40 18.87 15.10 22.55Q15.37 17.99 12.68 14.30ZM11.32 14.30Q8.63 17.99 8.90 22.55Q11.60 18.87 11.32 14.30ZM10.19 13.57Q5.92 15.22 3.69 19.20Q7.95 17.56 10.19 13.57ZM9.62 12.34Q5.15 11.42 1.11 13.57Q5.59 14.49 9.62 12.34ZM9.82 11.00Q6.55 7.81 1.99 7.43Q5.26 10.63 9.82 11.00ZM10.70 9.98Q9.68 5.53 6.05 2.75Q7.07 7.20 10.70 9.98Z" fill="url(#claude-mark-grad)"/></svg></div>
-            <div class="strip-cap"><span class="clickable" data-drilldown="live-sessions"><span id="stat-live-sessions">-</span> <span data-i18n="home.strip.liveSessions">个 Web UI 终端会话进行中</span></span> <span class="click-hint" data-i18n="home.card.clickHint">点击查看 ›</span></div>
+            <div class="strip-title"><span data-i18n="home.strip.sessions">Claude Code sessions monitored</span><svg class="claude-mark" viewBox="0 0 24 24" role="img" aria-label="Claude Code"><title>Claude Code</title><defs><linearGradient id="claude-mark-grad" x1="2" y1="2" x2="22" y2="22" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#ff9d43"/><stop offset="1" stop-color="#ec5615"/></linearGradient></defs><path d="M12.00 9.60Q13.55 5.30 12.00 1.00Q10.45 5.30 12.00 9.60ZM13.30 9.98Q16.93 7.20 17.95 2.75Q14.32 5.53 13.30 9.98ZM14.18 11.00Q18.74 10.63 22.01 7.43Q17.45 7.81 14.18 11.00ZM14.38 12.34Q18.41 14.49 22.89 13.57Q18.85 11.42 14.38 12.34ZM13.81 13.57Q16.05 17.56 20.31 19.20Q18.08 15.22 13.81 13.57ZM12.68 14.30Q12.40 18.87 15.10 22.55Q15.37 17.99 12.68 14.30ZM11.32 14.30Q8.63 17.99 8.90 22.55Q11.60 18.87 11.32 14.30ZM10.19 13.57Q5.92 15.22 3.69 19.20Q7.95 17.56 10.19 13.57ZM9.62 12.34Q5.15 11.42 1.11 13.57Q5.59 14.49 9.62 12.34ZM9.82 11.00Q6.55 7.81 1.99 7.43Q5.26 10.63 9.82 11.00ZM10.70 9.98Q9.68 5.53 6.05 2.75Q7.07 7.20 10.70 9.98Z" fill="url(#claude-mark-grad)"/></svg></div>
+            <div class="strip-cap"><span class="clickable" data-drilldown="live-sessions"><span id="stat-live-sessions">-</span> <span data-i18n="home.strip.liveSessions">Web UI terminal session(s) active</span></span> <span class="click-hint" data-i18n="home.card.clickHint">View details ›</span></div>
           </div>
         </div>
         <div class="card strip-card clickable" id="strip-approvals" data-goto-tab="approvals">
           <div class="strip-num accent-yellow-text" id="strip-pending">-</div>
           <div class="strip-body">
-            <div class="strip-title" data-i18n="home.strip.pending">待审批</div>
-            <div class="strip-cap" id="strip-pending-cap" data-i18n="home.strip.pendingNone">审批台没有等待处理的操作</div>
+            <div class="strip-title" data-i18n="home.strip.pending">Pending approvals</div>
+            <div class="strip-cap" id="strip-pending-cap" data-i18n="home.strip.pendingNone">Nothing waiting on the approval desk</div>
           </div>
         </div>
         <div class="card strip-card clickable" data-drilldown="blocked">
           <div class="strip-num accent-red-text" id="stat-blocked">-</div>
           <div class="strip-body">
-            <div class="strip-title" data-i18n="home.card.blocked">已拦截的高危操作</div>
-            <div class="strip-cap"><span id="stat-bypass">-</span> <span data-i18n="home.strip.bypass">条疑似绕过监测</span> <span class="click-hint" data-i18n="home.card.clickHint">点击查看 ›</span></div>
+            <div class="strip-title" data-i18n="home.card.blocked">High-risk operations blocked</div>
+            <div class="strip-cap"><span id="stat-bypass">-</span> <span data-i18n="home.strip.bypass">suspected bypass attempt(s)</span> <span class="click-hint" data-i18n="home.card.clickHint">View details ›</span></div>
           </div>
         </div>
         <div class="card strip-card" id="strip-usage">
           <div class="strip-num">-</div>
-          <div class="strip-body"><div class="strip-title" data-i18n="home.strip.sessionQuota">单次额度剩余</div></div>
+          <div class="strip-body"><div class="strip-title" data-i18n="home.strip.sessionQuota">Session quota remaining</div></div>
         </div>
       </div>
 
-      <!-- 工具栏：原来四条各带一段说明文字的控制条收成一行，说明进 ⓘ（悬停展开）。
-           按钮/开关的 id 一个没动，app.js 那边的绑定原样生效。 -->
+      <!-- Toolbar: the four control bars, each with its own paragraph of explanation, folded into one row;
+           the explanations moved into ⓘ (expand on hover). No button/toggle id changed, so the
+           bindings in app.js work as before. -->
       <div class="home-toolbar">
-        <span class="sec-title" data-i18n="home.toolbar.audit">介入级别</span>
-        <!-- 三档互斥，用分段控件而不是按钮：三个选项同时可见，当前档就是高亮那段，
-             控件本身即状态显示。从左到右是介入强度递减，这三档本来就是有序的。
-             旧版是"切换按钮 + 单独的停止按钮"，标签写的是动作不是状态，任何时刻只看得到
-             一个选项；而且从"已关闭"出发时切换按钮指向"拦截中"，导致关闭态没法一步切到
-             观察模式，必须先开回拦截再切一次——中间那一下是真的在拦截的。 -->
-        <div id="audit-level-seg" class="seg-ctl" role="radiogroup" data-i18n-aria-label="home.toolbar.audit" aria-label="介入级别">
-          <button type="button" class="seg-opt lv-running" data-level="running" role="radio" aria-checked="true"><span class="seg-dot"></span><span data-i18n="auditState.running">拦截中</span></button>
-          <button type="button" class="seg-opt lv-paused" data-level="paused" role="radio" aria-checked="false"><span class="seg-dot"></span><span data-i18n="auditState.paused">观察模式</span></button>
-          <button type="button" class="seg-opt lv-stopped" data-level="stopped" role="radio" aria-checked="false"><span class="seg-dot"></span><span data-i18n="auditState.stopped">已关闭</span></button>
+        <span class="sec-title" data-i18n="home.toolbar.audit">Intervention</span>
+        <!-- Three mutually exclusive levels, as a segmented control rather than buttons: all three options
+             are visible at once, the current level is the highlighted segment, and the control itself
+             shows the state. Left to right the intervention strength decreases; the levels are ordered.
+             The old version was "toggle button + separate stop button": the labels named actions, not
+             states, and only one option was visible at a time. Also, from "Off" the toggle pointed to
+             "Enforcing", so Off could not go straight to Permissive: you had to turn enforcing back on
+             first, and in that intermediate step it really was blocking. -->
+        <div id="audit-level-seg" class="seg-ctl" role="radiogroup" data-i18n-aria-label="home.toolbar.audit" aria-label="Intervention">
+          <button type="button" class="seg-opt lv-running" data-level="running" role="radio" aria-checked="true"><span class="seg-dot"></span><span data-i18n="auditState.running">Enforcing</span></button>
+          <button type="button" class="seg-opt lv-paused" data-level="paused" role="radio" aria-checked="false"><span class="seg-dot"></span><span data-i18n="auditState.paused">Permissive</span></button>
+          <button type="button" class="seg-opt lv-stopped" data-level="stopped" role="radio" aria-checked="false"><span class="seg-dot"></span><span data-i18n="auditState.stopped">Off</span></button>
         </div>
         <span class="info-tip" data-i18n-tip="home.auditCtl.hint" tabindex="0"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="8" cy="8" r="6.5"></circle><path d="M8 7v4.2M8 4.6v.2"></path></svg></span>
         <span class="tb-divider"></span>
-        <span class="sec-title" data-i18n="home.toolbar.data">数据</span>
-        <button id="archive-data-btn" class="btn-secondary" data-i18n="home.dataMgmt.archive">📦 持久化归档</button>
-        <button id="clear-data-btn" class="btn-danger" data-i18n="home.dataMgmt.clear">🗑 清空当前数据</button>
+        <span class="sec-title" data-i18n="home.toolbar.data">Data</span>
+        <button id="archive-data-btn" class="btn-secondary" data-i18n="home.dataMgmt.archive">📦 Archive current data</button>
+        <button id="clear-data-btn" class="btn-danger" data-i18n="home.dataMgmt.clear">🗑 Clear current data</button>
         <span class="info-tip" data-i18n-tip="home.dataMgmt.hint" tabindex="0"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="8" cy="8" r="6.5"></circle><path d="M8 7v4.2M8 4.6v.2"></path></svg></span>
         <span class="tb-divider"></span>
-        <button id="sync-update-btn" class="btn-secondary" data-i18n="home.syncUpdate.button">🔄 同步更新</button>
+        <button id="sync-update-btn" class="btn-secondary" data-i18n="home.syncUpdate.button">🔄 Sync update</button>
         <span class="info-tip" data-i18n-tip="home.syncUpdate.hint" tabindex="0"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="8" cy="8" r="6.5"></circle><path d="M8 7v4.2M8 4.6v.2"></path></svg></span>
         <span class="tb-spacer"></span>
         <label class="autoscroll-toggle" id="remote-access-row">
           <input type="checkbox" id="remote-access-toggle" class="switch-input">
           <span class="switch-track"><span class="switch-thumb"></span></span>
-          <span data-i18n="home.remoteAccess.label">允许其它设备访问</span>
+          <span data-i18n="home.remoteAccess.label">Allow access from other devices</span>
         </label>
         <span class="info-tip tip-left" data-i18n-tip="home.remoteAccess.hint" tabindex="0"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="8" cy="8" r="6.5"></circle><path d="M8 7v4.2M8 4.6v.2"></path></svg></span>
       </div>
       <div id="audit-level-note" class="hint home-toolbar-note"></div>
       <div id="remote-access-note" class="hint home-toolbar-note"></div>
 
-      <!-- 账号 & 额度：左边账号信息，右边三块额度 + 限额明细，一行放完 -->
+      <!-- Account & quota: account info on the left, three quota blocks + limit details on the right, all in one row -->
       <div class="sec">
-        <span class="sec-title" data-i18n="home.sec.account">Anthropic 账号 &amp; 额度</span>
+        <span class="sec-title" data-i18n="home.sec.account">Anthropic account &amp; quota</span>
         <span class="info-tip" data-i18n-tip="home.anthropicAccount.hint" tabindex="0"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="8" cy="8" r="6.5"></circle><path d="M8 7v4.2M8 4.6v.2"></path></svg></span>
         <button type="button" class="btn-secondary sec-btn account-mask-btn" data-i18n-title="home.account.maskTitle"></button>
-        <select class="pill-select usage-scheme-select" data-i18n-title="home.account.barSchemeTitle"><option value="default" data-i18n="home.account.scheme.default">配色：默认</option><option value="steps" data-i18n="home.account.scheme.steps">配色：分段色阶</option><option value="traffic" data-i18n="home.account.scheme.traffic">配色：红黄绿三档</option><option value="ocean" data-i18n="home.account.scheme.ocean">配色：蓝青</option><option value="neon" data-i18n="home.account.scheme.neon">配色：紫粉霓虹</option><option value="sunset" data-i18n="home.account.scheme.sunset">配色：日落暖</option><option value="forest" data-i18n="home.account.scheme.forest">配色：森林绿</option><option value="spectrum" data-i18n="home.account.scheme.spectrum">配色：光谱</option><option value="mono" data-i18n="home.account.scheme.mono">配色：灰度</option><option value="accent" data-i18n="home.account.scheme.accent">配色：主题强调色</option></select>
+        <select class="pill-select usage-scheme-select" data-i18n-title="home.account.barSchemeTitle"><option value="default" data-i18n="home.account.scheme.default">Colors: default</option><option value="steps" data-i18n="home.account.scheme.steps">Colors: stepped</option><option value="traffic" data-i18n="home.account.scheme.traffic">Colors: red/amber/green</option><option value="ocean" data-i18n="home.account.scheme.ocean">Colors: ocean</option><option value="neon" data-i18n="home.account.scheme.neon">Colors: neon</option><option value="sunset" data-i18n="home.account.scheme.sunset">Colors: sunset</option><option value="forest" data-i18n="home.account.scheme.forest">Colors: forest</option><option value="spectrum" data-i18n="home.account.scheme.spectrum">Colors: spectrum</option><option value="mono" data-i18n="home.account.scheme.mono">Colors: mono</option><option value="accent" data-i18n="home.account.scheme.accent">Colors: accent</option></select>
         <span class="sec-rule"></span>
       </div>
       <div class="home-account">
@@ -151,138 +155,138 @@
             <div id="anthropic-profile-info" class="kv-list"></div>
           </div>
           <div id="anthropic-spend-box" hidden>
-            <div class="box-title" style="margin-top:12px;" data-i18n="home.anthropicAccount.spendTitle">额外使用额度（spend）</div>
+            <div class="box-title" style="margin-top:12px;" data-i18n="home.anthropicAccount.spendTitle">Extra usage credits (spend)</div>
             <div id="anthropic-spend-info" class="kv-list"></div>
           </div>
         </div>
         <div class="home-box account-main">
           <div id="anthropic-usage-cards" class="usage-row"></div>
           <div id="anthropic-limits-box" hidden>
-            <div class="box-title" data-i18n="home.anthropicAccount.limitsTitle">额度明细（limits）</div>
+            <div class="box-title" data-i18n="home.anthropicAccount.limitsTitle">Limit details</div>
             <div id="anthropic-limits-list"></div>
           </div>
         </div>
       </div>
 
-      <!-- 安全：六张红卡并排；原来一整行的长说明进 ⓘ -->
+      <!-- Security: six red cards side by side; the long full-row explanation moved into ⓘ -->
       <div class="sec">
-        <span class="sec-title" data-i18n="home.sec.security">安全</span>
+        <span class="sec-title" data-i18n="home.sec.security">Security</span>
         <span class="info-tip" data-i18n-tip="home.sec.securityTip" tabindex="0"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="8" cy="8" r="6.5"></circle><path d="M8 7v4.2M8 4.6v.2"></path></svg></span>
         <span class="sec-rule"></span>
-        <span class="sec-note" data-i18n="home.sec.approxNote">按命中的规则近似识别，非精确 · 点卡片看分类明细</span>
+        <span class="sec-note" data-i18n="home.sec.approxNote">approximated from matched rules, not exact · click a card for the breakdown</span>
       </div>
       <div class="home-grid cols-6">
-        <div class="card accent-red-strong clickable" data-drilldown="sensitive-ops"><div class="card-num" id="stat-sensitive-total">-</div><div class="card-label"><span data-i18n="home.sensitiveOps.total">敏感操作</span> <span class="click-hint" data-i18n="home.card.clickHint">点击查看 ›</span></div><div class="card-sub" data-i18n="home.sensitiveOps.sub">SSH 密钥 · 凭据 · 环境变量 · 历史</div></div>
-        <div class="card accent-red-strong clickable" data-drilldown="sensitive-data"><div class="card-num" id="stat-sensitive-data-total">-</div><div class="card-label"><span data-i18n="home.sensitiveData.total">敏感数据</span> <span class="click-hint" data-i18n="home.card.clickHint">点击查看 ›</span></div><div class="card-sub" data-i18n="home.sensitiveData.sub">凭据 · PII · VPN 配置</div></div>
-        <div class="card accent-red-strong clickable" data-drilldown="advanced-threat"><div class="card-num" id="stat-advanced-threat-total">-</div><div class="card-label"><span data-i18n="home.advancedThreat.total">高级威胁检测</span> <span class="click-hint" data-i18n="home.card.clickHint">点击查看 ›</span></div><div class="card-sub" data-i18n="home.advancedThreat.sub">挖矿 · webshell · C2 · 隧道</div></div>
-        <div class="card accent-red-strong clickable" data-drilldown="workdir-escape"><div class="card-num" id="stat-workdir-escape-total">-</div><div class="card-label"><span data-i18n="home.workdirEscape.total">跨工作目录操作</span> <span class="click-hint" data-i18n="home.card.clickHint">点击查看 ›</span></div><div class="card-sub" id="stat-workdir-escape-sub" data-i18n="home.workdirEscape.sub">读 / 写 · 敏感位置</div></div>
-        <div class="card accent-red-strong clickable" data-drilldown="screenshot"><div class="card-num" id="stat-screenshot">-</div><div class="card-label"><span data-i18n="home.screenshotOps.total">截屏 / 查看图像内容</span> <span class="click-hint" data-i18n="home.card.clickHint">点击查看 ›</span></div><div class="card-sub">Bash · Read · MCP</div></div>
-        <div class="card accent-red-strong clickable" data-drilldown="reverseeng-ops"><div class="card-num" id="stat-reverseeng-total">-</div><div class="card-label"><span data-i18n="home.reverseEngOps.title2">逆向分析工具调用</span> <span class="click-hint" data-i18n="home.card.clickHint">点击查看 ›</span></div><div class="card-sub">IDA · Ghidra · r2 · GDB</div></div>
+        <div class="card accent-red-strong clickable" data-drilldown="sensitive-ops"><div class="card-num" id="stat-sensitive-total">-</div><div class="card-label"><span data-i18n="home.sensitiveOps.total">Sensitive operations</span> <span class="click-hint" data-i18n="home.card.clickHint">View details ›</span></div><div class="card-sub" data-i18n="home.sensitiveOps.sub">SSH keys · credentials · env vars · history</div></div>
+        <div class="card accent-red-strong clickable" data-drilldown="sensitive-data"><div class="card-num" id="stat-sensitive-data-total">-</div><div class="card-label"><span data-i18n="home.sensitiveData.total">Sensitive data</span> <span class="click-hint" data-i18n="home.card.clickHint">View details ›</span></div><div class="card-sub" data-i18n="home.sensitiveData.sub">credentials · PII · VPN config</div></div>
+        <div class="card accent-red-strong clickable" data-drilldown="advanced-threat"><div class="card-num" id="stat-advanced-threat-total">-</div><div class="card-label"><span data-i18n="home.advancedThreat.total">Advanced threats</span> <span class="click-hint" data-i18n="home.card.clickHint">View details ›</span></div><div class="card-sub" data-i18n="home.advancedThreat.sub">mining · webshell · C2 · tunnels</div></div>
+        <div class="card accent-red-strong clickable" data-drilldown="workdir-escape"><div class="card-num" id="stat-workdir-escape-total">-</div><div class="card-label"><span data-i18n="home.workdirEscape.total">Cross-workdir operations</span> <span class="click-hint" data-i18n="home.card.clickHint">View details ›</span></div><div class="card-sub" id="stat-workdir-escape-sub" data-i18n="home.workdirEscape.sub">read {read} / write {write} · sensitive {sensitive}</div></div>
+        <div class="card accent-red-strong clickable" data-drilldown="screenshot"><div class="card-num" id="stat-screenshot">-</div><div class="card-label"><span data-i18n="home.screenshotOps.total">Screenshots / viewed image content</span> <span class="click-hint" data-i18n="home.card.clickHint">View details ›</span></div><div class="card-sub">Bash · Read · MCP</div></div>
+        <div class="card accent-red-strong clickable" data-drilldown="reverseeng-ops"><div class="card-num" id="stat-reverseeng-total">-</div><div class="card-label"><span data-i18n="home.reverseEngOps.title2">Reverse-engineering tool calls</span> <span class="click-hint" data-i18n="home.card.clickHint">View details ›</span></div><div class="card-sub">IDA · Ghidra · r2 · GDB</div></div>
       </div>
 
-      <!-- 活动 -->
+      <!-- Activity -->
       <div class="sec">
-        <span class="sec-title" data-i18n="home.sec.activity">活动</span>
+        <span class="sec-title" data-i18n="home.sec.activity">Activity</span>
         <span class="info-tip" data-i18n-tip="home.sec.activityTip" tabindex="0"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="8" cy="8" r="6.5"></circle><path d="M8 7v4.2M8 4.6v.2"></path></svg></span>
         <span class="sec-rule"></span>
       </div>
       <div class="home-grid cols-6">
-        <div class="card dense clickable" data-drilldown="event-types"><div class="card-num" id="stat-total-events">-</div><div class="card-label"><span data-i18n="home.card.totalEvents">审计事件总数</span> <span class="click-hint" data-i18n="home.card.clickHint">点击查看 ›</span></div></div>
-        <div class="card dense clickable" data-drilldown="tool-calls"><div class="card-num" id="stat-tool-calls">-</div><div class="card-label"><span data-i18n="home.card.toolCalls">工具调用</span> <span class="click-hint" data-i18n="home.card.clickHint">点击查看 ›</span></div></div>
-        <div class="card dense clickable" data-drilldown="subagent-calls"><div class="card-num" id="stat-subagent-calls">-</div><div class="card-label"><span data-i18n="home.card.subagentCalls">子代理派生</span> <span class="click-hint" data-i18n="home.card.clickHint">点击查看 ›</span></div></div>
-        <div class="card dense clickable" data-drilldown="ai-trajectory"><div class="card-num" id="stat-ai-trajectory">-</div><div class="card-label"><span data-i18n="home.card.aiTrajectory">AI 轨迹（访问过的域名/IP）</span> <span class="click-hint" data-i18n="home.card.clickHint">点击查看 ›</span></div></div>
-        <div class="card dense clickable" data-drilldown="skill-calls"><div class="card-num" id="stat-skill-calls">-</div><div class="card-label"><span data-i18n="home.card.skillCalls">Skill 调用</span> <span class="click-hint" data-i18n="home.card.clickHint">点击查看 ›</span></div></div>
-        <!-- 三个低频计数合成一张卡，每个数字各自可点开自己的下钻 -->
+        <div class="card dense clickable" data-drilldown="event-types"><div class="card-num" id="stat-total-events">-</div><div class="card-label"><span data-i18n="home.card.totalEvents">Total audit events</span> <span class="click-hint" data-i18n="home.card.clickHint">View details ›</span></div></div>
+        <div class="card dense clickable" data-drilldown="tool-calls"><div class="card-num" id="stat-tool-calls">-</div><div class="card-label"><span data-i18n="home.card.toolCalls">Tool calls</span> <span class="click-hint" data-i18n="home.card.clickHint">View details ›</span></div></div>
+        <div class="card dense clickable" data-drilldown="subagent-calls"><div class="card-num" id="stat-subagent-calls">-</div><div class="card-label"><span data-i18n="home.card.subagentCalls">Subagent spawns</span> <span class="click-hint" data-i18n="home.card.clickHint">View details ›</span></div></div>
+        <div class="card dense clickable" data-drilldown="ai-trajectory"><div class="card-num" id="stat-ai-trajectory">-</div><div class="card-label"><span data-i18n="home.card.aiTrajectory">AI trajectory (domains/IPs visited)</span> <span class="click-hint" data-i18n="home.card.clickHint">View details ›</span></div></div>
+        <div class="card dense clickable" data-drilldown="skill-calls"><div class="card-num" id="stat-skill-calls">-</div><div class="card-label"><span data-i18n="home.card.skillCalls">Skill calls</span> <span class="click-hint" data-i18n="home.card.clickHint">View details ›</span></div></div>
+        <!-- Three low-frequency counts merged into one card; each number opens its own drill-down -->
         <div class="card dense">
           <div class="card-num card-num-multi"><span class="clickable" data-drilldown="mcp-calls" id="stat-mcp-calls">-</span><span class="sep">·</span><span class="clickable" data-drilldown="search-calls" id="stat-search-calls">-</span><span class="sep">·</span><span class="clickable" data-drilldown="todo-calls" id="stat-todo-calls">-</span></div>
-          <div class="card-label"><span data-i18n="home.card.mcpCalls">MCP 调用</span> · <span data-i18n="home.card.searchCalls">Glob/Grep 调用</span> · <span data-i18n="home.card.todoCallsShort">TodoWrite</span></div>
+          <div class="card-label"><span data-i18n="home.card.mcpCalls">MCP calls</span> · <span data-i18n="home.card.searchCalls">Glob/Grep calls</span> · <span data-i18n="home.card.todoCallsShort">TodoWrite</span></div>
         </div>
       </div>
       <div class="home-grid cols-2 split-by-content" style="margin-top:14px;">
         <div class="home-box">
-          <div class="box-title" data-i18n="home.fileOps.title">文件操作统计（Claude Code 发起的）</div>
+          <div class="box-title" data-i18n="home.fileOps.title">File operations (initiated by Claude Code)</div>
           <div class="mini-stats">
-            <div class="mini-stat clickable" data-drilldown="file-op-read"><div class="card-num" id="stat-file-reads">-</div><div class="card-label" data-i18n="home.fileOps.reads">读取</div></div>
-            <div class="mini-stat clickable" data-drilldown="file-op-write"><div class="card-num" id="stat-file-writes">-</div><div class="card-label" data-i18n="home.fileOps.writes">写入</div></div>
-            <div class="mini-stat clickable" data-drilldown="file-op-edit"><div class="card-num" id="stat-file-edits">-</div><div class="card-label" data-i18n="home.fileOps.edits">编辑</div></div>
-            <div class="mini-stat clickable" data-drilldown="file-op-delete"><div class="card-num" id="stat-file-deletes">-</div><div class="card-label" data-i18n="home.fileOps.deletes">删除（按命令文本近似识别，非精确）</div></div>
+            <div class="mini-stat clickable" data-drilldown="file-op-read"><div class="card-num" id="stat-file-reads">-</div><div class="card-label" data-i18n="home.fileOps.reads">Reads</div></div>
+            <div class="mini-stat clickable" data-drilldown="file-op-write"><div class="card-num" id="stat-file-writes">-</div><div class="card-label" data-i18n="home.fileOps.writes">Writes</div></div>
+            <div class="mini-stat clickable" data-drilldown="file-op-edit"><div class="card-num" id="stat-file-edits">-</div><div class="card-label" data-i18n="home.fileOps.edits">Edits</div></div>
+            <div class="mini-stat clickable" data-drilldown="file-op-delete"><div class="card-num" id="stat-file-deletes">-</div><div class="card-label" data-i18n="home.fileOps.deletes">Deletes (approximated from command text, not exact)</div></div>
           </div>
         </div>
         <div class="home-box">
-          <div class="box-title" data-i18n="home.installOps.title">软件安装统计（按命中的安装类规则识别）</div>
+          <div class="box-title" data-i18n="home.installOps.title">Software Installs (matched against install-type rules)</div>
           <div class="mini-stats">
-            <div class="mini-stat clickable" data-drilldown="install-op-pip"><div class="card-num" id="stat-install-pip">-</div><div class="card-label" data-i18n="home.installOps.pip">pip 安装 Python 包</div></div>
-            <div class="mini-stat clickable" data-drilldown="install-op-uv"><div class="card-num" id="stat-install-uv">-</div><div class="card-label" data-i18n="home.installOps.uv">uv 安装 Python 包</div></div>
-            <div class="mini-stat clickable" data-drilldown="install-op-pythonOther"><div class="card-num" id="stat-install-pythonOther">-</div><div class="card-label" data-i18n="home.installOps.pythonOther">其它 Python 包管理器（conda/poetry/pipx）</div></div>
-            <div class="mini-stat clickable" data-drilldown="install-op-system"><div class="card-num" id="stat-install-system">-</div><div class="card-label" data-i18n="home.installOps.system">系统包管理器（apt/yum/dnf/pacman/brew/port）</div></div>
-            <div class="mini-stat clickable" data-drilldown="install-op-toolchain"><div class="card-num" id="stat-install-toolchain">-</div><div class="card-label" data-i18n="home.installOps.toolchain">工具链 / 版本管理器</div></div>
-            <div class="mini-stat clickable" data-drilldown="install-op-js"><div class="card-num" id="stat-install-js">-</div><div class="card-label" data-i18n="home.installOps.js">JS 包管理器（npm/yarn/pnpm/bun）</div></div>
-            <div class="mini-stat clickable" data-drilldown="install-op-other"><div class="card-num" id="stat-install-other">-</div><div class="card-label" data-i18n="home.installOps.other">其它软件安装</div></div>
+            <div class="mini-stat clickable" data-drilldown="install-op-pip"><div class="card-num" id="stat-install-pip">-</div><div class="card-label" data-i18n="home.installOps.pip">pip installs (Python packages)</div></div>
+            <div class="mini-stat clickable" data-drilldown="install-op-uv"><div class="card-num" id="stat-install-uv">-</div><div class="card-label" data-i18n="home.installOps.uv">uv installs (Python packages)</div></div>
+            <div class="mini-stat clickable" data-drilldown="install-op-pythonOther"><div class="card-num" id="stat-install-pythonOther">-</div><div class="card-label" data-i18n="home.installOps.pythonOther">Other Python package managers (conda/poetry/pipx)</div></div>
+            <div class="mini-stat clickable" data-drilldown="install-op-system"><div class="card-num" id="stat-install-system">-</div><div class="card-label" data-i18n="home.installOps.system">System package manager (apt/yum/dnf/pacman/brew/port)</div></div>
+            <div class="mini-stat clickable" data-drilldown="install-op-toolchain"><div class="card-num" id="stat-install-toolchain">-</div><div class="card-label" data-i18n="home.installOps.toolchain">Toolchain / version managers</div></div>
+            <div class="mini-stat clickable" data-drilldown="install-op-js"><div class="card-num" id="stat-install-js">-</div><div class="card-label" data-i18n="home.installOps.js">JS package managers (npm/yarn/pnpm/bun)</div></div>
+            <div class="mini-stat clickable" data-drilldown="install-op-other"><div class="card-num" id="stat-install-other">-</div><div class="card-label" data-i18n="home.installOps.other">Other software installs</div></div>
           </div>
         </div>
       </div>
 
-      <!-- 命令类操作 -->
+      <!-- Command operations -->
       <div class="sec">
-        <span class="sec-title" data-i18n="home.sec.commands">命令类操作</span>
+        <span class="sec-title" data-i18n="home.sec.commands">Command operations</span>
         <span class="info-tip" data-i18n-tip="home.opsGroups.title" tabindex="0"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="8" cy="8" r="6.5"></circle><path d="M8 7v4.2M8 4.6v.2"></path></svg></span>
         <span class="sec-rule"></span>
-        <span class="sec-note" data-i18n="home.sec.drilldownNote">点开看分类明细</span>
+        <span class="sec-note" data-i18n="home.sec.drilldownNote">click for the category breakdown</span>
       </div>
       <div class="home-grid cols-7">
-        <div class="card dense clickable" data-drilldown="github-ops"><div class="card-num" id="stat-github-total">-</div><div class="card-label"><span data-i18n="home.githubOps.title2">GitHub 操作</span> <span class="click-hint" data-i18n="home.card.clickHint">点击查看 ›</span></div></div>
-        <div class="card dense clickable" data-drilldown="ssh-ops"><div class="card-num" id="stat-ssh-total">-</div><div class="card-label"><span data-i18n="home.sshOps.title2">SSH 操作</span> <span class="click-hint" data-i18n="home.card.clickHint">点击查看 ›</span></div></div>
-        <div class="card dense clickable" data-drilldown="download-ops"><div class="card-num" id="stat-download-total">-</div><div class="card-label"><span data-i18n="home.downloadOps.title2">下载行为</span> <span class="click-hint" data-i18n="home.card.clickHint">点击查看 ›</span></div></div>
-        <div class="card dense clickable" data-drilldown="file-send-ops"><div class="card-num" id="stat-filesend-total">-</div><div class="card-label"><span data-i18n="home.fileSendOps.title2">文件发送操作</span> <span class="click-hint" data-i18n="home.card.clickHint">点击查看 ›</span></div></div>
-        <div class="card dense clickable" data-drilldown="docker-ops"><div class="card-num" id="stat-docker-total">-</div><div class="card-label"><span data-i18n="home.dockerOps.title2">Docker 操作</span> <span class="click-hint" data-i18n="home.card.clickHint">点击查看 ›</span></div></div>
-        <div class="card dense clickable" data-drilldown="archive-ops"><div class="card-num" id="stat-archive-total">-</div><div class="card-label"><span data-i18n="home.archiveOps.title2">压缩/归档操作</span> <span class="click-hint" data-i18n="home.card.clickHint">点击查看 ›</span></div></div>
-        <div class="card dense clickable" data-drilldown="netdiag-ops"><div class="card-num" id="stat-netdiag-total">-</div><div class="card-label"><span data-i18n="home.netdiagOps.title2">网络诊断工具</span> <span class="click-hint" data-i18n="home.card.clickHint">点击查看 ›</span></div></div>
-        <div class="card dense clickable" data-drilldown="procbg-ops"><div class="card-num" id="stat-procbg-total">-</div><div class="card-label"><span data-i18n="home.procbgOps.title2">进程管理/后台驻留</span> <span class="click-hint" data-i18n="home.card.clickHint">点击查看 ›</span></div></div>
+        <div class="card dense clickable" data-drilldown="github-ops"><div class="card-num" id="stat-github-total">-</div><div class="card-label"><span data-i18n="home.githubOps.title2">GitHub operations</span> <span class="click-hint" data-i18n="home.card.clickHint">View details ›</span></div></div>
+        <div class="card dense clickable" data-drilldown="ssh-ops"><div class="card-num" id="stat-ssh-total">-</div><div class="card-label"><span data-i18n="home.sshOps.title2">SSH operations</span> <span class="click-hint" data-i18n="home.card.clickHint">View details ›</span></div></div>
+        <div class="card dense clickable" data-drilldown="download-ops"><div class="card-num" id="stat-download-total">-</div><div class="card-label"><span data-i18n="home.downloadOps.title2">Downloads</span> <span class="click-hint" data-i18n="home.card.clickHint">View details ›</span></div></div>
+        <div class="card dense clickable" data-drilldown="file-send-ops"><div class="card-num" id="stat-filesend-total">-</div><div class="card-label"><span data-i18n="home.fileSendOps.title2">File-send operations</span> <span class="click-hint" data-i18n="home.card.clickHint">View details ›</span></div></div>
+        <div class="card dense clickable" data-drilldown="docker-ops"><div class="card-num" id="stat-docker-total">-</div><div class="card-label"><span data-i18n="home.dockerOps.title2">Docker operations</span> <span class="click-hint" data-i18n="home.card.clickHint">View details ›</span></div></div>
+        <div class="card dense clickable" data-drilldown="archive-ops"><div class="card-num" id="stat-archive-total">-</div><div class="card-label"><span data-i18n="home.archiveOps.title2">Archive/Compression</span> <span class="click-hint" data-i18n="home.card.clickHint">View details ›</span></div></div>
+        <div class="card dense clickable" data-drilldown="netdiag-ops"><div class="card-num" id="stat-netdiag-total">-</div><div class="card-label"><span data-i18n="home.netdiagOps.title2">Network diagnostic tools</span> <span class="click-hint" data-i18n="home.card.clickHint">View details ›</span></div></div>
+        <div class="card dense clickable" data-drilldown="procbg-ops"><div class="card-num" id="stat-procbg-total">-</div><div class="card-label"><span data-i18n="home.procbgOps.title2">Process management / backgrounding</span> <span class="click-hint" data-i18n="home.card.clickHint">View details ›</span></div></div>
       </div>
 
-      <!-- 分布 -->
+      <!-- Distribution -->
       <div class="sec">
-        <span class="sec-title" data-i18n="home.sec.distribution">分布</span>
+        <span class="sec-title" data-i18n="home.sec.distribution">Distribution</span>
         <span class="sec-rule"></span>
       </div>
       <div class="home-grid cols-3">
         <div class="home-box">
-          <div class="box-title" data-i18n="home.sourceBreakdown">日志类型分布</div>
+          <div class="box-title" data-i18n="home.sourceBreakdown">Event type breakdown</div>
           <div id="source-breakdown" class="bar-list"></div>
         </div>
         <div class="home-box">
-          <div class="box-title" data-i18n="home.riskBreakdown">风险等级分布</div>
+          <div class="box-title" data-i18n="home.riskBreakdown">Risk level breakdown</div>
           <div id="risk-breakdown" class="bar-list"></div>
         </div>
         <div class="home-box">
-          <div class="box-title" data-i18n="home.decisionBreakdown">处置结果分布</div>
+          <div class="box-title" data-i18n="home.decisionBreakdown">Decision breakdown</div>
           <div id="decision-breakdown" class="bar-list"></div>
         </div>
       </div>
     </section>
 
-    <!-- Log 审计：全宽日志查看 -->
+    <!-- Audit Log: full-width log viewer -->
     <section id="view-logs" class="view">
       <div class="page-head">
-        <span class="sec-title" data-i18n="logs.title">审计日志</span>
+        <span class="sec-title" data-i18n="logs.title">Audit Log</span>
         <span class="info-tip" data-i18n-tip="logs.tip" tabindex="0"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="8" cy="8" r="6.5"></circle><path d="M8 7v4.2M8 4.6v.2"></path></svg></span>
         <label class="autoscroll-toggle">
           <input type="checkbox" id="log-autoscroll-toggle" class="switch-input" checked>
           <span class="switch-track"><span class="switch-thumb"></span></span>
-          <span data-i18n="logs.autoScroll">自动滚动到最新</span>
+          <span data-i18n="logs.autoScroll">Auto-scroll to latest</span>
         </label>
         <span class="tb-spacer"></span>
         <select id="log-session-filter" class="pill-select">
-          <option value="" data-i18n="logs.allSessions">全部会话</option>
+          <option value="" data-i18n="logs.allSessions">All sessions</option>
         </select>
       </div>
       <div id="log-list-full" class="log-list wide"></div>
     </section>
 
-    <!-- AI 审批台：action=confirm 的操作，触发它的终端里能直接按 y/N，这里也能点 -->
+    <!-- AI Approvals: action=confirm operations; the terminal that triggered one can answer y/N, and so can this page -->
     <section id="view-approvals" class="view">
       <div class="page-head">
-        <span class="sec-title" data-i18n="nav.approvals">AI 审批台</span>
+        <span class="sec-title" data-i18n="nav.approvals">AI Approvals</span>
         <span class="info-tip" data-i18n-tip="approvals.hint" tabindex="0"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="8" cy="8" r="6.5"></circle><path d="M8 7v4.2M8 4.6v.2"></path></svg></span>
         <span class="sec-rule"></span>
         <button id="approvals-notify-btn" class="btn-secondary" hidden></button>
@@ -290,38 +294,38 @@
       <div id="approvals-list" class="approvals-list"></div>
 
       <div class="sec">
-        <span class="sec-title" data-i18n="approvals.history.title">审批历史记录</span>
+        <span class="sec-title" data-i18n="approvals.history.title">Approval history</span>
         <span class="info-tip" data-i18n-tip="approvals.history.hint" tabindex="0"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="8" cy="8" r="6.5"></circle><path d="M8 7v4.2M8 4.6v.2"></path></svg></span>
         <span class="sec-rule"></span>
       </div>
       <div id="approvals-history-wrap" class="table-wrap"></div>
     </section>
 
-    <!-- 终端会话：多会话对话 + 输入 -->
+    <!-- Terminals: multi-session conversation + input -->
     <section id="view-terminal" class="view row">
       <aside id="sidebar">
-        <div class="page-head sidebar-head"><span class="sec-title" data-i18n="terminal.title">终端会话</span><span class="info-tip" data-i18n-tip="terminal.empty" tabindex="0"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="8" cy="8" r="6.5"></circle><path d="M8 7v4.2M8 4.6v.2"></path></svg></span></div>
-        <button id="new-session-btn" class="btn-primary" data-i18n="terminal.newSession">+ 新建会话</button>
-        <button id="new-window-btn" class="btn-secondary" style="width:100%;margin-bottom:10px;" data-i18n="terminal.newWindow">+ 新建窗口</button>
-        <button id="grid-toggle-btn" class="btn-secondary" style="width:100%;margin-bottom:10px;">⊞ 切换到网格视图</button>
+        <div class="page-head sidebar-head"><span class="sec-title" data-i18n="terminal.title">Terminal Sessions</span><span class="info-tip" data-i18n-tip="terminal.empty" tabindex="0"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="8" cy="8" r="6.5"></circle><path d="M8 7v4.2M8 4.6v.2"></path></svg></span></div>
+        <button id="new-session-btn" class="btn-primary" data-i18n="terminal.newSession">+ New Session</button>
+        <button id="new-window-btn" class="btn-secondary" style="width:100%;margin-bottom:10px;" data-i18n="terminal.newWindow">+ New Window</button>
+        <button id="grid-toggle-btn" class="btn-secondary" style="width:100%;margin-bottom:10px;">⊞ Switch to grid view</button>
         <div id="session-list" class="session-list"></div>
       </aside>
 
       <div id="terminal-pane">
         <div id="terminal-statusline"></div>
         <div id="terminal-wrap">
-          <div id="terminal-empty" class="empty-hint" data-i18n="terminal.empty">点击左侧"新建会话"启动一个 Claude Code 终端，可以直接在这里对话，不用再切到终端软件</div>
+          <div id="terminal-empty" class="empty-hint" data-i18n="terminal.empty">Click “New Session” on the left to start a Claude Code terminal — chat right here, no need to switch to a terminal app</div>
           <div id="terminal"></div>
         </div>
       </div>
 
       <div id="terminal-grid-pane" hidden>
-        <div class="grid-hint" data-i18n="terminal.gridHint">同屏显示所有进行中的会话，点击某个面板可以聚焦输入；只有点亮边框的那个会收到键盘输入。</div>
+        <div class="grid-hint" data-i18n="terminal.gridHint">Shows every active session on screen at once. Click a pane to focus it — only the highlighted one receives your keystrokes.</div>
         <div id="terminal-grid" class="terminal-grid"></div>
       </div>
     </section>
 
-    <!-- Claude Tap：发给/收到模型的完整对话内容，逐会话查看 -->
+    <!-- Claude Tap: the full conversation sent to / received from the model, per session -->
     <section id="view-tap" class="view">
       <div class="page-head">
         <span class="sec-title" data-i18n="nav.tap">Claude Tap</span>
@@ -329,29 +333,29 @@
         <label class="autoscroll-toggle">
           <input type="checkbox" id="tap-autoscroll-toggle" class="switch-input" checked>
           <span class="switch-track"><span class="switch-thumb"></span></span>
-          <span data-i18n="logs.autoScroll">自动滚动到最新</span>
+          <span data-i18n="logs.autoScroll">Auto-scroll to latest</span>
         </label>
         <label class="autoscroll-toggle">
           <input type="checkbox" id="tap-thinking-detail-toggle" class="switch-input">
           <span class="switch-track"><span class="switch-thumb"></span></span>
-          <span data-i18n="tap.showThinkingDetail">显示思考详情</span>
+          <span data-i18n="tap.showThinkingDetail">Show thinking detail</span>
         </label>
         <span id="tap-meta" class="sec-note"></span>
         <span class="tb-spacer"></span>
         <select id="tap-session-select" class="pill-select">
-          <option value="" data-i18n="tap.selectPlaceholder">选择一个会话…</option>
+          <option value="" data-i18n="tap.selectPlaceholder">Select a session…</option>
         </select>
       </div>
       <div id="tap-list" class="tap-list"></div>
     </section>
 
-    <!-- 状态信息：类似 ccstatusline，展示账号额度 + 每个会话的实时状态 -->
+    <!-- Status: like ccstatusline, shows account quota + live status of each session -->
     <section id="view-status" class="view">
       <div class="sec" style="margin-top:4px;">
-        <span class="sec-title" data-i18n="home.sec.account">Anthropic 账号 &amp; 额度</span>
+        <span class="sec-title" data-i18n="home.sec.account">Anthropic account &amp; quota</span>
         <span class="info-tip" data-i18n-tip="status.usageHint" tabindex="0"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="8" cy="8" r="6.5"></circle><path d="M8 7v4.2M8 4.6v.2"></path></svg></span>
         <button type="button" class="btn-secondary sec-btn account-mask-btn" data-i18n-title="home.account.maskTitle"></button>
-        <select class="pill-select usage-scheme-select" data-i18n-title="home.account.barSchemeTitle"><option value="default" data-i18n="home.account.scheme.default">配色：默认</option><option value="steps" data-i18n="home.account.scheme.steps">配色：分段色阶</option><option value="traffic" data-i18n="home.account.scheme.traffic">配色：红黄绿三档</option><option value="ocean" data-i18n="home.account.scheme.ocean">配色：蓝青</option><option value="neon" data-i18n="home.account.scheme.neon">配色：紫粉霓虹</option><option value="sunset" data-i18n="home.account.scheme.sunset">配色：日落暖</option><option value="forest" data-i18n="home.account.scheme.forest">配色：森林绿</option><option value="spectrum" data-i18n="home.account.scheme.spectrum">配色：光谱</option><option value="mono" data-i18n="home.account.scheme.mono">配色：灰度</option><option value="accent" data-i18n="home.account.scheme.accent">配色：主题强调色</option></select>
+        <select class="pill-select usage-scheme-select" data-i18n-title="home.account.barSchemeTitle"><option value="default" data-i18n="home.account.scheme.default">Colors: default</option><option value="steps" data-i18n="home.account.scheme.steps">Colors: stepped</option><option value="traffic" data-i18n="home.account.scheme.traffic">Colors: red/amber/green</option><option value="ocean" data-i18n="home.account.scheme.ocean">Colors: ocean</option><option value="neon" data-i18n="home.account.scheme.neon">Colors: neon</option><option value="sunset" data-i18n="home.account.scheme.sunset">Colors: sunset</option><option value="forest" data-i18n="home.account.scheme.forest">Colors: forest</option><option value="spectrum" data-i18n="home.account.scheme.spectrum">Colors: spectrum</option><option value="mono" data-i18n="home.account.scheme.mono">Colors: mono</option><option value="accent" data-i18n="home.account.scheme.accent">Colors: accent</option></select>
         <span class="sec-rule"></span>
       </div>
       <div class="home-account">
@@ -363,43 +367,43 @@
         <div class="home-box account-main">
           <div id="usage-board" class="usage-row"></div>
           <div id="status-limits-box" hidden>
-            <div class="box-title" data-i18n="home.anthropicAccount.limitsTitle">额度明细（limits）</div>
+            <div class="box-title" data-i18n="home.anthropicAccount.limitsTitle">Limit details</div>
             <div id="status-limits-list"></div>
           </div>
         </div>
       </div>
 
       <div class="sec">
-        <span class="sec-title" data-i18n="status.modelUsageTitle">模型使用统计</span>
+        <span class="sec-title" data-i18n="status.modelUsageTitle">Model Usage</span>
         <span class="info-tip" data-i18n-tip="status.modelUsageHint" tabindex="0"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="8" cy="8" r="6.5"></circle><path d="M8 7v4.2M8 4.6v.2"></path></svg></span>
         <span class="sec-rule"></span>
       </div>
       <div id="model-usage-wrap" class="home-box table-wrap"></div>
 
       <div class="sec">
-        <span class="sec-title" data-i18n="status.sessionTitle">会话状态</span>
+        <span class="sec-title" data-i18n="status.sessionTitle">Session Status</span>
         <span class="info-tip" data-i18n-tip="status.sessionHint" tabindex="0"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="8" cy="8" r="6.5"></circle><path d="M8 7v4.2M8 4.6v.2"></path></svg></span>
         <span class="sec-rule"></span>
       </div>
       <div id="status-board" class="status-board"></div>
     </section>
 
-    <!-- 网络流量：系统层探针（eBPF，Linux 专属）观测到的连接与字节数 -->
+    <!-- Network: connections and byte counts observed by the system-layer probe (eBPF, Linux only) -->
     <section id="view-network" class="view">
       <div class="page-head">
-        <span class="sec-title" data-i18n="network.title">Claude Code 网络流量</span>
+        <span class="sec-title" data-i18n="network.title">Claude Code Network Traffic</span>
         <span class="info-tip" data-i18n-tip="network.hint" tabindex="0"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="8" cy="8" r="6.5"></circle><path d="M8 7v4.2M8 4.6v.2"></path></svg></span>
         <div id="network-geo-badge" class="geo-acc-badge" hidden></div>
         <span class="sec-rule"></span>
       </div>
       <div id="network-summary" class="home-grid cols-6"></div>
       <div class="sec">
-        <span class="sec-title" data-i18n="network.mapTitle">连接目的地世界地图</span>
+        <span class="sec-title" data-i18n="network.mapTitle">World map of connection destinations</span>
         <span class="info-tip" data-i18n-tip="network.mapLegendAnchor" tabindex="0"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="8" cy="8" r="6.5"></circle><path d="M8 7v4.2M8 4.6v.2"></path></svg></span>
         <span class="sec-rule"></span>
         <span id="network-map-legend" class="sec-note">
-          <span class="map-legend-dot map-legend-dot-real"></span><span data-i18n="network.mapLegendReal">系统层探针实测</span>
-          &nbsp;&nbsp;<span class="map-legend-dot map-legend-dot-inferred"></span><span data-i18n="network.mapLegendInferred">命令文本推断</span>
+          <span class="map-legend-dot map-legend-dot-real"></span><span data-i18n="network.mapLegendReal">Observed by the system-layer probe</span>
+          &nbsp;&nbsp;<span class="map-legend-dot map-legend-dot-inferred"></span><span data-i18n="network.mapLegendInferred">Inferred from command text</span>
         </span>
       </div>
       <div id="network-map-wrap">
@@ -407,31 +411,31 @@
         <div id="network-map-empty" class="empty-state" hidden></div>
       </div>
       <div class="sec">
-        <span class="sec-title" data-i18n="network.tableTitle">按目标地址明细</span>
+        <span class="sec-title" data-i18n="network.tableTitle">Detail by destination</span>
         <span class="sec-rule"></span>
       </div>
       <div id="network-table-wrap" class="home-box table-wrap"></div>
     </section>
 
-    <!-- 操作时间线：每个会话一条泳道，按时间分桶显示操作密度与风险 -->
+    <!-- Timeline: one lane per session, showing operation density and risk per time bucket -->
     <section id="view-timeline" class="view">
       <div class="page-head">
-        <span class="sec-title" data-i18n="timeline.title">会话操作时间线</span>
+        <span class="sec-title" data-i18n="timeline.title">Session Activity Timeline</span>
         <span class="info-tip" data-i18n-tip="timeline.hint" tabindex="0"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="8" cy="8" r="6.5"></circle><path d="M8 7v4.2M8 4.6v.2"></path></svg></span>
         <span class="sec-rule"></span>
         <select id="timeline-range" class="pill-select">
-          <option value="60" data-i18n="timeline.range.1h">最近 1 小时</option>
-          <option value="360" data-i18n="timeline.range.6h">最近 6 小时</option>
-          <option value="1440" selected data-i18n="timeline.range.24h">最近 24 小时</option>
-          <option value="10080" data-i18n="timeline.range.7d">最近 7 天</option>
+          <option value="60" data-i18n="timeline.range.1h">Last 1 hour</option>
+          <option value="360" data-i18n="timeline.range.6h">Last 6 hours</option>
+          <option value="1440" selected data-i18n="timeline.range.24h">Last 24 hours</option>
+          <option value="10080" data-i18n="timeline.range.7d">Last 7 days</option>
         </select>
       </div>
       <div class="timeline-legend sec-note">
-        <span class="tl-swatch" style="background:var(--red)"></span><span data-i18n="risk.high">高</span>
-        <span class="tl-swatch" style="background:var(--yellow)"></span><span data-i18n="risk.medium">中</span>
-        <span class="tl-swatch" style="background:var(--green)"></span><span data-i18n="risk.low">低</span>
-        <span class="tl-swatch" style="background:var(--cyan)"></span><span data-i18n="risk.info">信息</span>
-        <span class="tl-swatch tl-swatch-blocked"></span><span data-i18n="timeline.legendBlocked">含被拦截操作</span>
+        <span class="tl-swatch" style="background:var(--red)"></span><span data-i18n="risk.high">High</span>
+        <span class="tl-swatch" style="background:var(--yellow)"></span><span data-i18n="risk.medium">Medium</span>
+        <span class="tl-swatch" style="background:var(--green)"></span><span data-i18n="risk.low">Low</span>
+        <span class="tl-swatch" style="background:var(--cyan)"></span><span data-i18n="risk.info">Info</span>
+        <span class="tl-swatch tl-swatch-blocked"></span><span data-i18n="timeline.legendBlocked">Contains blocked op</span>
         <span class="tl-axis-note" id="timeline-axis-note"></span>
       </div>
       <div id="timeline-wrap">
@@ -440,28 +444,28 @@
       </div>
       <div id="timeline-tooltip" class="timeline-tooltip" hidden></div>
 
-      <!-- 单个会话的操作流程图：点上面某条泳道/某根柱子打开 -->
+      <!-- Flow chart for a single session: opened by clicking a lane/bar above -->
       <div id="flow-section" hidden>
         <div class="sec flow-head">
-          <span class="sec-title" data-i18n="flow.title">会话操作流程</span>
+          <span class="sec-title" data-i18n="flow.title">Session Operation Flow</span>
           <span class="info-tip" data-i18n-tip="flow.hint" tabindex="0"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="8" cy="8" r="6.5"></circle><path d="M8 7v4.2M8 4.6v.2"></path></svg></span>
           <span id="flow-session-label" class="flow-session-label"></span>
           <span class="sec-rule"></span>
-          <button type="button" id="flow-open-logs" class="btn-secondary sec-btn" data-i18n="flow.openLogs">在 Log 审计中查看</button>
-          <button type="button" id="flow-close" class="btn-secondary sec-btn" data-i18n="flow.close">关闭</button>
+          <button type="button" id="flow-open-logs" class="btn-secondary sec-btn" data-i18n="flow.openLogs">Open in Audit Log</button>
+          <button type="button" id="flow-close" class="btn-secondary sec-btn" data-i18n="flow.close">Close</button>
         </div>
         <div id="flow-note" class="sec-note" hidden></div>
         <div class="flow-layout">
           <div id="flow-viewport"></div>
-          <aside id="flow-detail"><div class="empty-state" data-i18n="flow.detailEmpty">点击任意操作卡片查看详情</div></aside>
+          <aside id="flow-detail"><div class="empty-state" data-i18n="flow.detailEmpty">Click any card to see details</div></aside>
         </div>
       </div>
     </section>
 
-    <!-- 历史数据：之前归档过的事件数据快照列表 -->
+    <!-- History: list of previously archived event data snapshots -->
     <section id="view-archives" class="view">
       <div class="page-head">
-        <span class="sec-title" data-i18n="archives.title">历史数据记录</span>
+        <span class="sec-title" data-i18n="archives.title">Historical Data</span>
         <span class="info-tip" data-i18n-tip="archives.hint" tabindex="0"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="8" cy="8" r="6.5"></circle><path d="M8 7v4.2M8 4.6v.2"></path></svg></span>
         <span class="sec-rule"></span>
       </div>
@@ -473,52 +477,52 @@
 
 <div id="settings-modal" class="modal-backdrop" hidden>
   <div class="modal">
-    <h3 data-i18n="settings.title">外观设置</h3>
+    <h3 data-i18n="settings.title">Appearance</h3>
 
     <div class="field">
-      <span data-i18n="settings.themeLabel">主题配色</span>
+      <span data-i18n="settings.themeLabel">Color theme</span>
       <div id="theme-swatch-grid" class="theme-grid"></div>
     </div>
 
     <label class="field">
-      <span data-i18n="settings.fontLabel">界面字体</span>
+      <span data-i18n="settings.fontLabel">Interface font</span>
       <select id="font-family-select">
-        <option value="system" data-i18n="settings.font.system">系统默认</option>
-        <option value="mono" data-i18n="settings.font.mono">等宽字体</option>
-        <option value="serif" data-i18n="settings.font.serif">衬线字体</option>
-        <option value="rounded" data-i18n="settings.font.rounded">圆体</option>
-        <option value="kaiti" data-i18n="settings.font.kaiti">楷体</option>
-        <option value="heiti" data-i18n="settings.font.heiti">黑体（思源黑体）</option>
-        <option value="songti" data-i18n="settings.font.songti">宋体（思源宋体）</option>
+        <option value="system" data-i18n="settings.font.system">System default</option>
+        <option value="mono" data-i18n="settings.font.mono">Monospace</option>
+        <option value="serif" data-i18n="settings.font.serif">Serif</option>
+        <option value="rounded" data-i18n="settings.font.rounded">Rounded</option>
+        <option value="kaiti" data-i18n="settings.font.kaiti">Kaiti (Chinese calligraphy-style)</option>
+        <option value="heiti" data-i18n="settings.font.heiti">Heiti (Source Han Sans)</option>
+        <option value="songti" data-i18n="settings.font.songti">Songti (Source Han Serif)</option>
       </select>
     </label>
 
     <label class="field">
-      <span><span data-i18n="settings.sizeLabel">界面字号</span>: <span id="font-size-value">14</span>px</span>
+      <span><span data-i18n="settings.sizeLabel">Interface font size</span>: <span id="font-size-value">14</span>px</span>
       <input id="font-size-range" type="range" min="12" max="18" step="1" value="14">
     </label>
 
-    <div id="font-preview" class="font-preview" data-i18n="settings.previewText">CC-Monitor 正在监控 Claude Code 的文件读写、命令执行与网络连接。</div>
+    <div id="font-preview" class="font-preview" data-i18n="settings.previewText">CC-Monitor is watching Claude Code's file reads/writes, command execution, and network connections.</div>
 
     <div class="modal-actions">
-      <button id="settings-reset-btn" class="btn-secondary" data-i18n="settings.reset">恢复默认</button>
-      <button id="settings-close-btn" class="btn-primary" data-i18n="modal.close">关闭</button>
+      <button id="settings-reset-btn" class="btn-secondary" data-i18n="settings.reset">Reset to defaults</button>
+      <button id="settings-close-btn" class="btn-primary" data-i18n="modal.close">Close</button>
     </div>
   </div>
 </div>
 
 <div id="new-session-modal" class="modal-backdrop" hidden>
   <div class="modal">
-    <h3 id="new-session-title" data-i18n="modal.newSession.title">新建终端会话</h3>
-    <p id="new-session-hint" class="modal-hint" data-i18n-html="modal.newSession.hint">会在这个目录下打开一个 shell，并自动帮你敲好 <code>claude</code> 启动命令。</p>
-    <label for="new-session-cwd" data-i18n="modal.newSession.cwdLabel">工作目录</label>
+    <h3 id="new-session-title" data-i18n="modal.newSession.title">New Terminal Session</h3>
+    <p id="new-session-hint" class="modal-hint" data-i18n-html="modal.newSession.hint">Opens a shell in this directory and types the <code>claude</code> launch command for you.</p>
+    <label for="new-session-cwd" data-i18n="modal.newSession.cwdLabel">Working directory</label>
     <div class="cwd-input-row">
-      <input id="new-session-cwd" type="text" data-i18n-placeholder="modal.newSession.cwdPlaceholder" placeholder="/home/you/project（留空用默认目录）" autocomplete="off">
-      <button id="new-session-browse-btn" class="btn-secondary" type="button" data-i18n="modal.newSession.browse">📁 浏览</button>
+      <input id="new-session-cwd" type="text" data-i18n-placeholder="modal.newSession.cwdPlaceholder" placeholder="/home/you/project (leave blank for default)" autocomplete="off">
+      <button id="new-session-browse-btn" class="btn-secondary" type="button" data-i18n="modal.newSession.browse">📁 Browse</button>
     </div>
     <div class="modal-actions">
-      <button id="new-session-cancel" class="btn-secondary" data-i18n="modal.cancel">取消</button>
-      <button id="new-session-confirm" class="btn-primary" data-i18n="modal.create">创建</button>
+      <button id="new-session-cancel" class="btn-secondary" data-i18n="modal.cancel">Cancel</button>
+      <button id="new-session-confirm" class="btn-primary" data-i18n="modal.create">Create</button>
     </div>
   </div>
 </div>
@@ -526,38 +530,38 @@
 <div id="dir-browser-modal" class="modal-backdrop" hidden>
   <div class="modal modal-wide">
     <div class="modal-header-row">
-      <h3 data-i18n="modal.dirBrowser.title">选择文件夹</h3>
-      <button id="dir-browser-close" class="btn-secondary" data-i18n="drilldown.close">关闭</button>
+      <h3 data-i18n="modal.dirBrowser.title">Select Folder</h3>
+      <button id="dir-browser-close" class="btn-secondary" data-i18n="drilldown.close">Close</button>
     </div>
     <div id="dir-browser-path" class="dir-browser-path"></div>
     <div id="dir-browser-list" class="dir-browser-list"></div>
     <div class="modal-actions">
-      <button id="dir-browser-cancel" class="btn-secondary" data-i18n="modal.cancel">取消</button>
-      <button id="dir-browser-select" class="btn-primary" data-i18n="modal.dirBrowser.select">选择此文件夹</button>
+      <button id="dir-browser-cancel" class="btn-secondary" data-i18n="modal.cancel">Cancel</button>
+      <button id="dir-browser-select" class="btn-primary" data-i18n="modal.dirBrowser.select">Select This Folder</button>
     </div>
   </div>
 </div>
 
 <div id="archive-modal" class="modal-backdrop" hidden>
   <div class="modal">
-    <h3 data-i18n="modal.archive.title">持久化归档</h3>
-    <p class="modal-hint" data-i18n="modal.archive.hint">把当前的事件数据完整存一份快照到历史记录里，可以起个名字方便以后识别（不填也可以）。归档之后当前数据不会被清空，如果想重新开始统计，请再点"清空当前数据"。</p>
-    <label for="archive-label" data-i18n="modal.archive.labelLabel">备注名称</label>
-    <input id="archive-label" type="text" data-i18n-placeholder="modal.archive.labelPlaceholder" placeholder="比如：上线前基线 / 2026-09-12 排查记录" autocomplete="off">
+    <h3 data-i18n="modal.archive.title">Archive Current Data</h3>
+    <p class="modal-hint" data-i18n="modal.archive.hint">Saves a full snapshot of the current event data into your history. You can give it a name to make it easier to find later (optional). Archiving does not clear the current data — click “Clear current data” if you want to start fresh.</p>
+    <label for="archive-label" data-i18n="modal.archive.labelLabel">Label</label>
+    <input id="archive-label" type="text" data-i18n-placeholder="modal.archive.labelPlaceholder" placeholder="e.g. pre-release baseline / 2026-09-12 investigation" autocomplete="off">
     <div class="modal-actions">
-      <button id="archive-cancel" class="btn-secondary" data-i18n="modal.cancel">取消</button>
-      <button id="archive-confirm" class="btn-primary" data-i18n="modal.archive.confirm">存档</button>
+      <button id="archive-cancel" class="btn-secondary" data-i18n="modal.cancel">Cancel</button>
+      <button id="archive-confirm" class="btn-primary" data-i18n="modal.archive.confirm">Archive</button>
     </div>
   </div>
 </div>
 
 <div id="confirm-modal" class="modal-backdrop" hidden>
   <div class="modal">
-    <h3 id="confirm-title">确认操作</h3>
+    <h3 id="confirm-title">Confirm action</h3>
     <p id="confirm-body" class="modal-hint"></p>
     <div class="modal-actions">
-      <button id="confirm-cancel" class="btn-secondary" data-i18n="modal.cancel">取消</button>
-      <button id="confirm-ok" class="btn-danger" data-i18n="modal.confirm">确认</button>
+      <button id="confirm-cancel" class="btn-secondary" data-i18n="modal.cancel">Cancel</button>
+      <button id="confirm-ok" class="btn-danger" data-i18n="modal.confirm">Confirm</button>
     </div>
   </div>
 </div>
@@ -565,8 +569,8 @@
 <div id="drilldown-modal" class="modal-backdrop" hidden>
   <div class="modal modal-wide">
     <div class="modal-header-row">
-      <h3 id="drilldown-title">详情</h3>
-      <button id="drilldown-close" class="btn-secondary" data-i18n="drilldown.close">关闭</button>
+      <h3 id="drilldown-title">Details</h3>
+      <button id="drilldown-close" class="btn-secondary" data-i18n="drilldown.close">Close</button>
     </div>
     <div id="drilldown-body" class="drilldown-body"></div>
   </div>

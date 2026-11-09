@@ -1,25 +1,25 @@
-/* 多主题：都用同一套变量名，只是取值不同，其它 CSS 完全不用改。
-   通过 <html data-theme="..."> 切换，JS 里存 localStorage，见 app.js 的 applyTheme()。 */
+/* Multiple themes: all share one set of variable names with different values, so no other CSS needs to change.
+   Switched via <html data-theme="...">; JS stores the choice in localStorage, see applyTheme() in app.js. */
 
-/* ---------- 分类配色（日志类型分布这类"身份"型数据）----------
-   马卡龙色系的色相家族（蓝 / 珊瑚 / 青绿 / 紫 / 琥珀 / 玫红），但深度是算出来的不是
-   挑出来的：纯粹的马卡龙浅色调过不了可读性检查（实测亮度超界、彩度低到发灰、对比度
-   只有 1.3~2.2:1），所以保留色相、把明度压进可用区间。
+/* ---------- Categorical colours (identity-type data such as the log-type distribution) ----------
+   Hue families from a macaron palette (blue / coral / teal / purple / amber / rose), but the depth is computed,
+   not hand-picked: pure macaron pastels fail the readability checks (measured lightness out of range, chroma so
+   low it looks grey, contrast only 1.3–2.2:1), so we keep the hues and push lightness into the usable range.
 
-   两套取值都跑过验证：亮度带、彩度下限、色盲相邻对分离度、正常视力分离度、对底色
-   对比度五项全过。深色主题那套的相邻对最差 ΔE 12.5，浅色那套 11.4，都高于 8 的目标线。
-   不能直接把浅色那套反转拿去深色用——深色底的可用亮度带不一样（实测 L 0.48–0.67），
-   所以两套各自独立取值、各自验证。
+   Both sets pass all five validation checks: lightness band, chroma floor, adjacent-pair separation for colour
+   blindness, separation for normal vision, and contrast against the background. Worst adjacent-pair ΔE is 12.5 for the dark set and 11.4 for the light set, both above the target of 8.
+   The light set cannot simply be inverted for dark themes: the usable lightness band on a dark background is different (measured L 0.48–0.67),
+   so each set is chosen and validated on its own.
 
-   顺序不能随意改：验证是按"相邻两项"算分离度的，而渲染顺序由 app.js 里的
-   SOURCE_ORDER 固定，两者必须对齐。要调色请重跑 dataviz 的 validate_palette.js。 */
+   Do not reorder: validation scores separation between adjacent pairs, and the render order is fixed by
+   SOURCE_ORDER in app.js; the two must match. To adjust colours, rerun dataviz's validate_palette.js. */
 :root {
-  --cat-1: #3E8FD4;  /* 蓝 */
-  --cat-2: #E7643D;  /* 珊瑚 */
-  --cat-3: #17A392;  /* 青绿 */
-  --cat-4: #8265E0;  /* 紫 */
-  --cat-5: #B88E22;  /* 琥珀 */
-  --cat-6: #DC5A91;  /* 玫红 */
+  --cat-1: #3E8FD4;  /* blue */
+  --cat-2: #E7643D;  /* coral */
+  --cat-3: #17A392;  /* teal */
+  --cat-4: #8265E0;  /* purple */
+  --cat-5: #B88E22;  /* amber */
+  --cat-6: #DC5A91;  /* rose */
 }
 :root[data-theme="brand"],
 :root[data-theme="light"] {
@@ -31,18 +31,18 @@
   --cat-6: #D4508B;
 }
 
-/* ---------- 介入级别的三档专用色 ----------
-   刻意不复用 --green/--yellow/--red：那三个是"好/注意/坏"的语义色，会随主题变，而档位
-   要的是三个互相区分得开的身份色，跟好坏无关（观察模式不是"警告"，关闭也不是"错误"）。
-   所以固定取值、不随主题走，三个主题下看到的档位颜色都一样。
-   每个档位配一个 on-* 前景色，都是拿背景色算过对比度挑的，最低 5.38:1，全部达到
-   WCAG AA 对正文字号的 4.5:1 要求——填色块上的文字不能只挑好看的。 */
+/* ---------- Dedicated colours for the three intervention levels ----------
+   Deliberately not reusing --green/--yellow/--red: those are good/caution/bad semantic colours that change with the theme, while the levels
+   need three distinct identity colours unrelated to good or bad (Permissive is not a "warning", Off is not an "error").
+   So the values are fixed and do not follow the theme; the level colours look the same in all three themes.
+   Each level has an on-* foreground colour chosen by computing contrast against the background, minimum 5.38:1, all meeting
+   WCAG AA's 4.5:1 requirement for body text. Text on a filled block cannot be picked just for looks. */
 :root {
-  --lv-enforce: #9333ea;      /* 拦截：紫 */
+  --lv-enforce: #9333ea;      /* block: purple */
   --lv-enforce-on: #ffffff;   /* 5.38:1 */
-  --lv-observe: #22c55e;      /* 观察模式：绿 */
+  --lv-observe: #22c55e;      /* Permissive: green */
   --lv-observe-on: #052e16;   /* 6.54:1 */
-  --lv-off: #facc15;          /* 已关闭：黄 */
+  --lv-off: #facc15;          /* Off: yellow */
   --lv-off-on: #422006;       /* 9.52:1 */
 }
 :root,
@@ -106,9 +106,9 @@
   --magenta: #b48ead;
 }
 
-/* 以下 5 个主题移植自 https://github.com/cn0xroot/AI_Web_Search 的配色方案，
-   变量名换成我们自己这套（--bg/--bg-panel/--bg-elevated/--accent/--magenta 等），
-   取值直接对应搬过来；该项目没有定义 --red/--cyan，这两个按各主题色调自己配了近似值。 */
+/* The following 5 themes are ported from the colour schemes of https://github.com/cn0xroot/AI_Web_Search,
+   with variable names mapped onto ours (--bg/--bg-panel/--bg-elevated/--accent/--magenta, etc.)
+   and values carried over directly; that project defines no --red/--cyan, so those two use approximations matched to each theme. */
 :root[data-theme="midnight"] {
   --bg: #07080f;
   --bg-panel: #0d1117;
@@ -184,7 +184,7 @@
   --magenta: #a855f7;
 }
 
-/* "brand" 主题：直接用你给的这套配色方案（浅色调 + 高饱和强调色），默认主题。 */
+/* "brand" theme: uses the palette you supplied as-is (light tones + high-saturation accents); the default theme. */
 :root[data-theme="brand"] {
   --bg: #f4f0f1;
   --bg-panel: #f9f5e6;
@@ -200,8 +200,8 @@
   --magenta: #eb9dff;
 }
 
-/* 语义"徽章"色——风险等级/操作类型/状态用，不随主题切换而改变，
-   保持鲜艳统一、一眼能认出来（用户给的调色板原值）。 */
+/* Semantic "badge" colours, used for risk level / operation type / status; they do not change with the theme,
+   staying bright and consistent so they are recognisable at a glance (original values from the user's palette). */
 :root {
   --badge-blue: #4757e8;
   --badge-green: #10c378;
@@ -215,8 +215,8 @@
   --badge-orange: #ff9d43;
 }
 
-/* 界面字体/字号——外观设置弹窗里可以改，存 localStorage，applyFont()/applyFontSize()
-   写这两个变量，body 读这两个变量，默认值就是原来写死在 body 里的那一套。 */
+/* UI font / font size: editable in the appearance settings dialog and stored in localStorage; applyFont()/applyFontSize()
+   write these two variables and body reads them; the defaults are the values that used to be hard-coded in body. */
 :root {
   --app-font: "Inter", -apple-system, "Segoe UI", "Helvetica Neue", Arial,
     "LXGW WenKai", "霞鹜文楷", "楷体", "STKaiti", "Kaiti SC", KaiTi, "AR PL UKai CN",
@@ -226,22 +226,22 @@
 
 * { box-sizing: border-box; }
 
-/* button/input/select/textarea 这几个表单控件元素，浏览器自己的默认样式表压根不会
-   让它们继承正文的 font-family（会摆烂用系统 UI 控件字体，通常是 Arial 之类），这是
-   每个浏览器的标准行为，不是继承链断了——导航栏按钮、"新建会话"这些按钮字体设置
-   改了跟没改一样，根因就是这个，不显式指定 inherit 就永远拿不到 --app-font。 */
+/* Browsers' own default stylesheets never let the form controls button/input/select/textarea
+   inherit the body font-family (they fall back to the system UI control font, usually something like Arial). This is
+   standard behaviour in every browser, not a broken inheritance chain. It is why changing the font setting did nothing
+   to the nav bar buttons and buttons like "new session": without an explicit inherit they never get --app-font. */
 button, input, select, textarea { font-family: inherit; }
 
-/* 字号设置要真正"全局生效"就不能只改 body 自己的 font-size——样式表里到处都是
-   写死的 px（按钮、卡片数字、表格文字……），body 变了它们纹丝不动，改了跟没改
-   一样。改成让字号设置作用在根元素（html）上，样式表里所有 font-size 全部换成
-   相对根字号的 rem，这样调一个变量就能整站等比例缩放，不会出现"只有正文变了，
-   别的都没变"这种看起来像没生效的效果。 */
-/* font-size 必须单独给 html 写一条规则，不能塞进下面 "html, body {}" 那个联选器里——
-   联选器里的声明是同时套给两个元素的，之前就是这样把 html 自己的字号规则覆盖掉了
-   （body 的 1rem 在联选器里同时也套到了 html 头上，1rem 在根元素身上不是"相对自己"，
-   是相对浏览器默认字号 16px，结果 html 的字号规则被这条后来的规则盖掉，实际怎么调
-   设置里的滑块都没用）。body 不用额外写 font-size，靠 CSS 继承就会跟 html 一致。 */
+/* For the font size setting to apply globally, changing body's own font-size is not enough: the stylesheet is full of
+   hard-coded px (buttons, card numbers, table text...), which do not move when body changes, so the setting looks
+   like it did nothing. Instead the setting applies to the root element (html) and every font-size in the stylesheet
+   is in rem relative to the root size, so one variable scales the whole site proportionally, with no "only the body
+   text changed and nothing else did" effect that looks like the setting failed. */
+/* font-size must have its own rule for html; it cannot go in the "html, body {}" combined selector below:
+   declarations in a combined selector apply to both elements, which is how html's own font size rule used to get overridden
+   (body's 1rem also applied to html, and 1rem on the root element is not "relative to itself" but
+   relative to the browser default of 16px, so this later rule overrode html's font size and no matter how the slider
+   in settings was moved nothing happened). body needs no font-size of its own; CSS inheritance keeps it in line with html. */
 html { font-size: var(--app-font-size); }
 
 html, body {
@@ -249,15 +249,15 @@ html, body {
   height: 100%;
   background: var(--bg);
   color: var(--text);
-  /* 英文用系统里好看的 UI 字体（苹果/Windows 各自的系统字体，都没有就退到 Arial）；
-     中文用楷体——这些西文字体本身不带中文字形，浏览器逐字符找字体时会自然落到
-     后面这几个楷体字体上，不用额外用 @font-face + unicode-range 分开处理。 */
+  /* Latin text uses a good-looking system UI font (each platform's system font on Apple/Windows, falling back to Arial);
+     Chinese uses Kaiti. These Latin fonts have no Chinese glyphs, so the browser's per-character font lookup naturally falls
+     through to the Kaiti fonts that follow, with no need for separate @font-face + unicode-range handling. */
   font-family: var(--app-font);
 }
 
 #app { display: flex; flex-direction: column; height: 100vh; }
 
-/* ---------- 顶部导航 ---------- */
+/* ---------- Top navigation ---------- */
 #topbar {
   display: flex;
   align-items: center;
@@ -295,7 +295,7 @@ html, body {
   vertical-align: middle;
 }
 
-/* ---------- 待批准 ---------- */
+/* ---------- Pending approval ---------- */
 .approvals-list { display: flex; flex-direction: column; gap: 10px; padding-bottom: 20px; }
 .approval-item {
   border: 2px solid var(--yellow);
@@ -303,7 +303,7 @@ html, body {
   padding: 10px 14px;
   background: color-mix(in srgb, var(--yellow) 8%, var(--bg-elevated));
 }
-/* 审批卡三层文案：标题（要确认什么操作）> 解释（为什么要确认）> 规则 id + 工具（小字） */
+/* Three text tiers on an approval card: title (what operation to confirm) > explanation (why it needs confirming) > rule id + tool (small text) */
 .approval-headline { margin-top: 6px; font-size: 1rem; font-weight: 700; line-height: 1.35; }
 .approval-headline-prefix { color: var(--yellow); margin-right: 2px; }
 .approval-item-notify .approval-headline { font-weight: 600; }
@@ -322,14 +322,14 @@ html, body {
 .approval-actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
 .approval-actions button { width: auto; margin-bottom: 0; }
 
-/* kind='notify'（比如 AskUserQuestion）——没有 allow/deny 语义，用蓝色跟高危的
-   黄色确认框区分开，提醒"这只是个通知，答案要去终端给"。 */
+/* kind='notify' (for example AskUserQuestion) has no allow/deny meaning; blue sets it apart from the high-risk
+   yellow confirmation prompt, as a reminder that "this is only a notification; the answer goes in the terminal". */
 .approval-item-notify {
   border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 8%, var(--bg-elevated));
 }
-/* kind='permission'（Claude Code 自己的原生确认框被同步过来）——跟 confirm 一样能点，
-   但它不是我们规则判出来的，用中性的边框色区分"这是 Claude Code 在问"。 */
+/* kind='permission' (Claude Code's own native confirmation prompt, synced over) is clickable like confirm,
+   but it was not decided by our rules, so a neutral border colour marks it as "Claude Code is asking". */
 .approval-item-permission {
   border-color: var(--text-dim);
   border-style: dashed;
@@ -352,7 +352,7 @@ html, body {
 .pill.gpu { color: var(--green); border-color: var(--green); }
 .pill.cpu { color: var(--yellow); border-color: var(--yellow); }
 
-/* ---------- 顶栏审计状态指示灯 ---------- */
+/* ---------- Top bar audit status light ---------- */
 .audit-state-running,
 .audit-state-paused,
 .audit-state-stopped { font-weight: 700; }
@@ -371,7 +371,7 @@ html, body {
   cursor: pointer;
 }
 
-/* ---------- 视图容器 ---------- */
+/* ---------- View container ---------- */
 #views { flex: 1 1 auto; min-height: 0; overflow: hidden; }
 .view { display: none; height: 100%; overflow-y: auto; padding: 18px 22px; }
 .view.active { display: block; }
@@ -390,7 +390,7 @@ html, body {
 }
 .panel-title .hint { text-transform: none; letter-spacing: 0; font-size: 0.7857rem; color: var(--text-dim); }
 
-/* ---------- 首页：数据管理（持久化归档 / 清空当前数据） ---------- */
+/* ---------- Home: data management (persistent archive / clear current data) ---------- */
 .data-mgmt-bar {
   display: flex;
   align-items: center;
@@ -400,10 +400,10 @@ html, body {
 }
 .data-mgmt-bar .hint { color: var(--text-dim); font-size: 0.8571rem; flex: 1 1 240px; }
 .data-mgmt-bar button { flex: 0 0 auto; width: auto; margin-bottom: 0; }
-/* ---------- 介入级别：三档分段控件 ----------
-   三个互斥档位并排，选中那段填色。配色沿用原来三个按钮各自的绿/黄/红——那套色本来就
-   是按档位分的，只是以前挂在一个标签会变的按钮上，现在还给档位本身。
-   未选中的段保持低对比，避免三段都在抢注意力；只有当前档是彩色的。 */
+/* ---------- Intervention level: three-segment control ----------
+   Three mutually exclusive levels side by side; the selected segment is filled. The colours keep the old green/yellow/red of the
+   three buttons: that palette was always per level, it just used to hang on one button whose label changed; now it goes back to the levels themselves.
+   Unselected segments stay low-contrast so the three do not all compete for attention; only the current level is in colour. */
 .seg-ctl {
   display: inline-flex;
   flex: 0 0 auto;
@@ -431,8 +431,8 @@ html, body {
 }
 .seg-ctl .seg-opt:hover { color: var(--text); background: var(--bg-panel); }
 .seg-ctl .seg-opt:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-/* 小圆点：未选中时是空心的轮廓，选中后填成该档的颜色。即使在只看得见明暗的显示环境下，
-   实心/空心也能把当前档区分出来，不是只靠颜色传达状态。 */
+/* Small dot: an empty outline when unselected, filled with the level's colour when selected. Even on a display that only shows light and dark,
+   filled vs empty still identifies the current level, so state is not conveyed by colour alone. */
 .seg-ctl .seg-dot {
   width: 8px;
   height: 8px;
@@ -447,29 +447,29 @@ html, body {
 .seg-ctl .lv-paused[aria-checked="true"]  { background: var(--lv-observe); color: var(--lv-observe-on); border-color: var(--lv-observe); }
 .seg-ctl .lv-stopped[aria-checked="true"] { background: var(--lv-off);     color: var(--lv-off-on);     border-color: var(--lv-off); }
 
-/* 当前档位的一行说明，紧跟控件下方——"观察模式和已关闭有什么区别"是这组选项最容易
-   混淆的点，答案就放在控件旁边，不要求用户先去悬停 ⓘ 或者点开确认框才看得到。 */
+/* One line describing the current level, right below the control. "What is the difference between Permissive and Off" is the
+   most confusing point in this set of options, so the answer sits next to the control instead of requiring a hover on ⓘ or opening a confirmation prompt. */
 #audit-level-note { color: var(--text-dim); }
-/* 允许远程访问打开的时候要显眼——这个开关关系到有没有人能不经身份验证直接连上
-   这台机器的 shell，不能跟旁边其它普通开关一个存在感。 */
+/* When remote access is enabled it must stand out: this switch decides whether someone can reach this machine's shell
+   without authentication, so it cannot have the same presence as the ordinary switches next to it. */
 #remote-access-row.active { color: var(--red); font-weight: 700; }
 #remote-access-row.active .switch-track { background: var(--red); }
 
-/* ---------- 首页：紧凑仪表盘（态势摘要条 / 工具栏 / 分组标题 / 网格） ----------
-   配色、圆角、字号全部沿用上面 .card/.home-box/.box-title 那套，这里只加排版容器。 */
+/* ---------- Home: compact dashboard (summary strip / toolbar / group headings / grid) ----------
+   Colours, corner radii and font sizes all follow the .card/.home-box/.box-title set above; this only adds layout containers. */
 .home-strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 14px; margin-bottom: 14px; }
 .strip-card { display: flex; align-items: center; gap: 14px; padding: 12px 16px; }
 .strip-num { font-size: 1.7143rem; font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums; flex: 0 0 auto; }
 .strip-body { min-width: 0; flex: 1 1 auto; }
 .strip-title { font-weight: 600; font-size: 0.9286rem; line-height: 1.3; }
-/* "已监测的 Claude Code 会话"后面那个橙色星芒——标识这张卡统计的是谁的会话。
-   跟顶栏品牌 logo 里那个 spark 用同一组橙色，视觉上是一家的。 */
+/* The orange spark after "monitored Claude Code sessions" marks whose sessions this card counts.
+   It uses the same orange as the spark in the top bar brand logo, so the two read as one family. */
 .claude-mark { display: inline-block; width: 24px; height: 24px; vertical-align: -6px; margin-left: 7px; }
 .strip-cap { color: var(--text-dim); font-size: 0.8571rem; margin-top: 2px; }
 .strip-cap .clickable { cursor: pointer; }
 .strip-cap .clickable:hover { color: var(--accent); }
 .strip-dot { width: 10px; height: 10px; border-radius: 50%; flex: 0 0 auto; background: var(--text-dim); }
-/* 心跳徽章在摘要卡里不悬浮在右上角（会压住标题），改成行尾的一个普通 flex 项 */
+/* In the summary card the heartbeat badge does not float in the top-right corner (it would cover the title); it becomes an ordinary flex item at the end of the row */
 .strip-card .card-vital-badge { position: static; margin-left: auto; flex: 0 0 auto; align-self: flex-start; }
 .strip-dot.running { background: var(--lv-enforce); box-shadow: 0 0 0 3px var(--bg-elevated), 0 0 0 4px var(--lv-enforce); }
 .strip-dot.paused  { background: var(--lv-observe); box-shadow: 0 0 0 3px var(--bg-elevated), 0 0 0 4px var(--lv-observe); }
@@ -493,11 +493,11 @@ html, body {
 .sec-title { font-size: 0.8571rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: .04em; font-weight: 600; white-space: nowrap; }
 .sec-rule { flex: 1 1 auto; height: 1px; background: var(--border); }
 .sec-note { font-family: Menlo, Consolas, monospace; font-size: 0.7857rem; color: var(--text-dim); white-space: nowrap; }
-/* 分组标题行里的小按钮（比如账号信息的"隐藏敏感信息"）——比正文按钮矮一圈，做成胶囊状 */
+/* Small buttons in group heading rows (for example "Hide sensitive information" for account info): a size smaller than body buttons, pill-shaped */
 .sec-btn { flex: 0 0 auto; width: auto; margin: 0; padding: 3px 12px; font-size: 0.8571rem; border-radius: 999px; }
 .sec-btn.active { border-color: var(--accent); color: var(--accent); font-weight: 600; }
 
-/* ⓘ 说明：悬停/聚焦时把长段说明文字以气泡形式展开，data-tip 由 i18n 的 data-i18n-tip 填 */
+/* ⓘ help: on hover/focus, long explanatory text expands as a bubble; data-tip is filled from i18n's data-i18n-tip */
 .info-tip { position: relative; display: inline-flex; width: 14px; height: 14px; color: var(--text-dim); cursor: help; flex: 0 0 auto; outline: none; }
 .info-tip svg { width: 14px; height: 14px; }
 .info-tip:hover, .info-tip:focus { color: var(--accent); }
@@ -515,11 +515,11 @@ html, body {
 
 .home-grid { display: grid; gap: 14px; }
 .home-grid.cols-2 { grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
-/* 两个 box 内容量差很多的一行（文件操作 4 项 vs 软件安装 7 项）。默认 grid 会把同一行
-   的格子拉成等高，项少的那个底部就空出一大片。两件事一起解决：
-   1) align-items:start —— 不再强行等高，任何宽度下都不会出现大块空白；
-   2) 宽屏下按内容量分配宽度（约 35% / 65%），让两边各自一行放得下，高度自然就齐了。
-   窄屏 auto-fit 会塌成单列，那时按 1) 处理就够了。 */
+/* A row with two boxes of very different content size (file operations 4 items vs software install 7 items). By default grid stretches
+   cells in the same row to equal height, leaving a large empty area at the bottom of the shorter one. Two things fix it together:
+   1) align-items:start: no forced equal height, so no large blank area at any width;
+   2) on wide screens, widths follow content size (about 35% / 65%) so each side fits on one line and heights line up naturally.
+   On narrow screens auto-fit collapses to a single column, where 1) is enough. */
 .home-grid.cols-2.split-by-content { align-items: start; }
 @media (min-width: 1360px) {
   .home-grid.cols-2.split-by-content { grid-template-columns: 0.7fr 1.3fr; }
@@ -542,28 +542,28 @@ html, body {
 .mini-stat.clickable { cursor: pointer; border-radius: 6px; }
 .mini-stat.clickable:hover .card-num { color: var(--accent); }
 
-/* 账号列和额度列并排。这里要的是等高（默认的 stretch），不是各按内容高：两列宽度
-   差很多、右列内容明显更长，如果各自按内容收，左列会比右列矮一截，并排看就是一个
-   台阶，像没渲染完。等高之后左列底部会空一点，但那是"留白"，不是"断掉"。
-   这跟下面文件操作那一行的取舍相反——那一行两个 box 等宽、内容量相近，拉等高反而会
-   在项少的那个里留出一大块洞，所以那边用 align-items:start。取舍看内容，不看规则。 */
+/* The account column and quota column side by side. Here we want equal height (the default stretch), not content height: the two columns
+   differ a lot in width and the right one has clearly more content; if each shrank to its content the left would be shorter, and side by side
+   that reads as a step, as if rendering had not finished. With equal height the left column has some space at the bottom, but that is "white space", not a "break".
+   This is the opposite trade-off from the file operations row below: there the two boxes are equal width with similar content, and stretching to equal height would
+   leave a big hole in the one with fewer items, so that row uses align-items:start. Decide by content, not by rule. */
 .home-account { display: grid; grid-template-columns: minmax(260px, 300px) minmax(0, 1fr); gap: 14px; align-items: stretch; }
 @media (max-width: 1100px) { .home-account { grid-template-columns: 1fr; } }
 .home-account .home-box { flex: none; }
-/* 账号列等高之后，内容只占 235px 左右、盒子被拉到跟右边额度列一样高，底部会空出
-   一大片。解决办法不是把高度收回去（那就又变回台阶了），而是让内容自己铺满：
-   整列改成 flex 列，资料那张表撑开并把九行均匀分布，行距从 4px 长到十几 px，读起来
-   是"舒展"而不是"中间断了"；"额外使用额度"那一小节自然落到列底。
-   内容本来就比列高的场景下 space-between 不产生任何效果，所以不需要额外判断。 */
+/* With the account column at equal height, its content takes only about 235px while the box stretches to the height of the quota column on the right,
+   leaving a large gap at the bottom. The fix is not to shrink the height back (that brings the step back) but to let the content fill the space:
+   the whole column becomes a flex column, the profile table expands and spreads its nine rows evenly, row spacing grows from 4px to a dozen or so px, so it reads
+   as "spacious" rather than "broken in the middle"; the "extra usage quota" subsection naturally drops to the bottom of the column.
+   When the content is already taller than the column, space-between has no effect, so no extra check is needed. */
 .home-account .account-col { display: flex; flex-direction: column; }
 .home-account .account-col > #anthropic-profile-box { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; }
 .home-account .account-col #anthropic-profile-info { flex: 1 1 auto; justify-content: space-between; }
-/* 额度列同样要吃掉多余高度，否则等高之后空洞只是从左边搬到右边。这一列的最后一块是
-   一张 <table>，flex 分布不了表格行，但表格自身设了 height:100% 之后行会按比例撑开，
-   这是 table 的固有行为，正好拿来吸收余量：多出来的高度变成行距，而不是底部一个洞。
-   两列现在用的是同一个套路——最后一块 flex:1 吃掉余量，内部再把余量摊给各行。 */
-/* 账号资料的标签列加宽：默认 96px 装不下"Claude Code 版本"（实测需要 117px）和英文的
-   "Subscription started"，会折成两行。只放宽账号列这一处，别处的 kv-list 不动。 */
+/* The quota column must absorb the extra height too, otherwise equal height just moves the gap from left to right. The last block in this column is
+   a <table>; flex cannot distribute table rows, but with height:100% on the table itself its rows stretch proportionally.
+   That is intrinsic table behaviour and works well for absorbing the remainder: the extra height becomes row spacing instead of a hole at the bottom.
+   Both columns now use the same approach: the last block takes flex:1 to absorb the remainder, then spreads it across its rows. */
+/* Widen the label column of the account profile: the default 96px cannot fit "Claude Code version" (measured at 117px) or the English
+   "Subscription started", which would wrap to two lines. Only the account column is widened; other kv-lists are unchanged. */
 .home-account .account-col .kv-list .bar-row .name { flex: 0 0 122px; }
 
 .home-account .account-main { display: flex; flex-direction: column; }
@@ -571,9 +571,9 @@ html, body {
 .home-account .account-main > #anthropic-limits-box > #anthropic-limits-list { flex: 1 1 auto; }
 .home-account .account-main > #anthropic-limits-box > #anthropic-limits-list > table { height: 100%; }
 
-/* 标识符是截断显示的（头 8…尾 4），用等宽字体对齐，悬停看完整值 */
+/* Identifiers are shown truncated (first 8…last 4), in a monospace font for alignment; hover to see the full value */
 .ident-val { font-family: Menlo, Consolas, monospace; font-size: 0.9em; cursor: help; }
-/* 版本号旁边的"近似"小标——没能执行 claude --version 时的诚实标注，不假装是准确值 */
+/* The "approximate" tag next to the version number: an honest marker when claude --version could not be run, not pretending to be exact */
 .approx-tag { font-size: 0.78em; color: var(--text-dim); border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; margin-left: 4px; cursor: help; }
 .kv-list { display: flex; flex-direction: column; gap: 6px; }
 .kv-list .bar-row { font-size: 0.8929rem; }
@@ -583,7 +583,7 @@ html, body {
 .usage-row .card .neon-bar-lg { width: 100%; }
 .usage-row .empty-state { grid-column: 1 / -1; }
 
-/* ---------- 各标签页统一的页头：短标题 + ⓘ + 行内控件（跟首页 .sec 同一套） ---------- */
+/* ---------- Shared page header for every tab: short title + ⓘ + inline controls (same set as Home's .sec) ---------- */
 .page-head { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin: 0 0 14px; padding: 8px 12px; background: var(--bg-panel); border: 1px solid var(--border); border-radius: 10px; flex: 0 0 auto; }
 .page-head .sec-rule { flex: 1 1 auto; }
 .page-head .pill-select { max-width: 320px; }
@@ -596,7 +596,7 @@ html, body {
 #view-network .home-grid { margin-bottom: 4px; }
 #view-status .home-account { margin-bottom: 4px; }
 
-/* ---------- 历史数据记录列表 ---------- */
+/* ---------- History record list ---------- */
 .archives-list { display: flex; flex-direction: column; gap: 8px; padding-bottom: 20px; }
 .archive-item {
   display: flex;
@@ -617,7 +617,7 @@ html, body {
 .archive-load-more { display: block; margin: 10px auto 4px; width: auto; }
 .archive-load-more[hidden] { display: none; }
 
-/* ---------- 首页 ---------- */
+/* ---------- Home ---------- */
 .cards { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 22px; }
 .card {
   position: relative;
@@ -654,28 +654,28 @@ html, body {
 .bar-row .dot { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; }
 .bar-row .name { flex: 0 0 130px; color: var(--text-dim); }
 .bar-row .track { flex: 1 1 auto; height: 8px; background: var(--bg-elevated); border-radius: 4px; overflow: hidden; }
-/* .fill 必须显式 block：它是 span，默认 display:inline，而行内非替换元素的 width/
-   height 根本不生效，于是宽高都是 0，背景色设了也画不出来——底部"分布"那三组数据条
-   一直是全白的就是这个原因。旁边的 .dot 同样是 span 却正常，是因为它是 .bar-row 这个
-   flex 容器的直接子项，被 blockify 了；.fill 在 .track 里面，.track 不是 flex 容器。 */
+/* .fill must be explicitly block: it is a span, display:inline by default, and width/height do not apply
+   to inline non-replaced elements, so both were 0 and the background colour could not be drawn. That is why the three "distribution" bar groups
+   at the bottom were always blank white. The .dot next to it is also a span but works, because it is a direct child of the .bar-row
+   flex container and gets blockified; .fill sits inside .track, and .track is not a flex container. */
 .bar-row .fill { display: block; height: 100%; border-radius: 4px; }
 .bar-row .count { flex: 0 0 40px; text-align: right; }
 
-/* ---------- Log 审计（全宽页） ---------- */
-/* 之前这里写的是 `#view-logs { display: flex; ... }`——ID 选择器的优先级比
-   `.view { display: none }` 这个 class 选择器高，不管有没有 .active 都会赢，
-   导致这个页面永远是 display:flex（可见），常年占着 #views 容器、把 DOM 顺序
-   在它后面的终端会话/Claude Tap/状态信息/历史数据全部挡住看不见——这就是那个
-   "点其它 tab 还是显示日志审计" bug 的根因。加上 .active 就只在真正激活时生效。 */
+/* ---------- Audit Log (full-width page) ---------- */
+/* This used to be `#view-logs { display: flex; ... }`. The ID selector has higher specificity than
+   the `.view { display: none }` class selector and wins whether or not .active is present,
+   so this page was always display:flex (visible), permanently occupying the #views container and hiding everything after it
+   in DOM order (Terminals / Claude Tap / Status / History). That was the root cause of the
+   "clicking another tab still shows the Audit Log" bug. Adding .active makes it apply only when actually active. */
 #view-logs.active { display: flex; flex-direction: column; }
 .logs-toolbar { display: flex; align-items: center; gap: 10px; flex: 0 0 auto; }
-/* 跟 Claude Tap 那边保持一致的布局：允许换行，会话筛选下拉推到工具栏最右边，
-   标题和自动滚动开关留在左边一组。 */
+/* Same layout as the Claude Tap page: wrapping allowed, the session filter dropdown pushed to the far right of the toolbar,
+   the title and auto-scroll switch grouped on the left. */
 #view-logs .logs-toolbar { flex-wrap: wrap; }
 #view-logs #log-session-filter { order: 1; }
-/* 自动滚动开关：视觉上是个 iOS 风格的滑动开关，底层还是原生 <input type="checkbox">——
-   只是把它缩到看不见（依然占位、依然可以被 <label> 点击/键盘聚焦），旁边这两个 <span>
-   纯粹是画出来的轨道+圆点，用 :checked 同级选择器联动样式，不用额外写 JS。 */
+/* Auto-scroll switch: visually an iOS-style slide switch, underneath still a native <input type="checkbox">.
+   It is just shrunk out of sight (it still takes space and can still be clicked via <label> or focused by keyboard); the two <span>s next to it
+   only draw the track and knob, styled through the :checked sibling selector, with no extra JS. */
 .autoscroll-toggle { display: flex; align-items: center; gap: 7px; font-size: 0.8571rem; color: var(--text-dim); cursor: pointer; user-select: none; }
 .autoscroll-toggle .switch-input {
   position: absolute;
@@ -709,7 +709,7 @@ html, body {
 .autoscroll-toggle .switch-input:focus-visible + .switch-track { outline: 2px solid var(--accent); outline-offset: 2px; }
 .log-list.wide { flex: 1 1 auto; min-height: 0; }
 
-/* ---------- 终端会话 ---------- */
+/* ---------- Terminals ---------- */
 #sidebar {
   flex: 0 0 220px;
   border-right: 1px solid var(--border);
@@ -743,8 +743,8 @@ html, body {
 .session-item:hover { background: var(--bg-elevated); }
 .session-item.active { border-color: var(--accent); background: var(--bg-elevated); }
 .session-item .cwd { color: var(--text); word-break: break-all; }
-/* 会话状态点——working/idle/blocked，跟 herdr "一眼看出哪个卡住了"是一个思路。
-   blocked 用闪烁强调，这是三个状态里唯一"需要你现在就去处理"的。 */
+/* Session status dot (working/idle/blocked), the same idea as herdr's "see at a glance which one is stuck".
+   blocked blinks for emphasis: it is the only one of the three states that "needs you to deal with it now". */
 .status-dot {
   display: inline-block;
   width: 8px;
@@ -762,19 +762,19 @@ html, body {
   50% { opacity: 0.25; }
 }
 
-/* "生命体征"状态指示——用一套连续渐变的"心电监护仪"视觉语言，而不是三个离散的固定
-   颜色：距上次活跃的时间越久，心形颜色从深红逐渐褪成灰色、心电图波形的摆动幅度也
-   跟着收窄，1 小时以外直接拉平成一条直线（跟 dead 状态视觉上收敛成同一种样子——
-   "很久没动静"跟"进程已经不在了"看起来该是一回事）。--vital-heat 是 0~1 的连续值，
-   由 renderVital() 按 agoMs 算好通过内联样式传进来；只有 working（5 分钟内）才有
-   跳动的心跳动画和滚动的波形动画，再往后即使颜色/幅度还没完全褪光也是静止的——
-   "静止" 本身就在传达"最近没有新动静"这个信号。三态共用同一个 renderVital() 组件，
-   出现在会话列表/claude 进程明细/Web UI 终端会话三个下钻详情、状态信息标签页的
-   会话状态列表，以及首页"监测到的 Claude Code 会话总数"卡片。--vital-color 也是
-   renderVital() 算好传进来的（按主题色手动插值出的 rgb()）——不用 CSS 的
-   color-mix() 做，是因为它在不支持这个函数的浏览器上会让整个属性计算失败，
-   working/idle/dead 三态一起退化成同一种继承色，看起来"全灰"，这里的默认值
-   只是没传内联样式时的兜底。 */
+/* "Vital signs" status indicator: a continuous "heart monitor" visual language rather than three fixed discrete
+   colours. The longer since last activity, the more the heart fades from deep red to grey and the more the ECG waveform's
+   amplitude narrows; beyond 1 hour it flattens to a straight line (visually converging with the dead state:
+   "silent for a long time" and "the process is gone" should look the same). --vital-heat is a continuous 0–1 value,
+   computed by renderVital() from agoMs and passed in as an inline style. Only working (within 5 minutes) has
+   the beating heart animation and scrolling waveform animation; after that it is still even if the colour/amplitude has not fully faded.
+   "Stillness" itself signals "nothing new recently". All three states share one renderVital() component,
+   which appears in the session list / claude process details / Web UI terminal session drill-down details, the session
+   status list on the Status tab, and the Home "total Claude Code sessions detected" card. --vital-color is also
+   computed by renderVital() and passed in (an rgb() hand-interpolated from theme colours). It does not use CSS
+   color-mix() because in browsers without that function the whole property fails to compute, and
+   working/idle/dead would all degrade to the same inherited colour and look "all grey". The default here
+   is only the fallback when no inline style is passed. */
 .vital {
   display: inline-flex;
   align-items: center;
@@ -783,7 +783,7 @@ html, body {
   --vital-color: var(--text-dim);
 }
 .vital-heart {
-  /* 心跳图标放大一档：14px 在表格里太小，颜色深浅（也就是"有多活跃"）几乎看不出来 */
+  /* Heart icon one size larger: 14px is too small in a table, and its shade (that is, "how active") is barely visible */
   width: 20px;
   height: 20px;
   flex: 0 0 auto;
@@ -797,7 +797,7 @@ html, body {
 }
 .vital-ecg path {
   stroke: var(--vital-color);
-  /* 幅度跟着 heat 走，但留个 25% 的底，避免摆动小到肉眼看不出跟直线的区别 */
+  /* Amplitude follows heat, with a 25% floor so the swing is never too small to tell apart from a straight line */
   transform: scaleY(calc(0.25 + var(--vital-heat, 0) * 0.75));
   transform-origin: center;
   transform-box: fill-box;
@@ -815,7 +815,7 @@ html, body {
 @keyframes vital-scroll {
   to { stroke-dashoffset: -20; }
 }
-/* 首页卡片上的迷你徽章：只在有会话正处于 working 状态时才出现，静默的时候不占地方 */
+/* Mini badge on the Home card: appears only while a session is in the working state, takes no space when quiet */
 .card-vital-badge {
   position: absolute;
   top: 8px;
@@ -849,7 +849,7 @@ html, body {
 .empty-hint {
   position: absolute;
   inset: 0;
-  z-index: 2; /* 压在 xterm 的黑底画布上面，不然提示文字被终端盖住看不见 */
+  z-index: 2; /* above xterm's black canvas, otherwise the terminal covers the hint text */
   display: flex;
   align-items: center;
   justify-content: center;
@@ -885,7 +885,7 @@ html, body {
   background: var(--bg-elevated);
   border-left: 3px solid transparent;
 }
-/* 高危事件整条卡片都要显眼：红色左边条 + 淡红底色 + 加粗，不是只靠一个小徽章。 */
+/* High-risk events make the whole card stand out: red left bar + light red background + bold, not just a small badge. */
 .log-item.risk-high { border-left-color: var(--badge-danger); background: color-mix(in srgb, var(--badge-danger) 8%, var(--bg-elevated)); font-weight: 600; }
 
 .log-item .row1 { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
@@ -904,7 +904,7 @@ html, body {
 .log-item .risk.low { color: #13401f; background: var(--badge-green-soft); }
 .log-item .risk.info, .log-item .risk\.- { color: var(--text-dim); background: transparent; border: 1px solid var(--border); font-weight: 600; }
 
-/* 操作类型徽章：读/写/编辑/执行/删除分别给鲜艳但不同的颜色，一眼扫过去就能分类。 */
+/* Operation type badges: read/write/edit/execute/delete each get a bright, distinct colour so they can be sorted at a glance. */
 .log-item .label.op-read { color: #fff; background: var(--badge-blue); }
 .log-item .label.op-write { color: #06281a; background: var(--badge-green); }
 .log-item .label.op-edit { color: #2b1300; background: var(--badge-orange); }
@@ -918,8 +918,8 @@ html, body {
 .log-item .decision.observed { color: #2a0a3d; background: var(--badge-purple); }
 
 .log-item .cwd { color: var(--text-dim); font-size: 0.75rem; margin-top: 4px; }
-/* 事件列表里"文件夹 · session · 路径 · 规则"这一行分段上色——整行灰字的时候，在几百条
-   记录里找"哪个项目、哪条规则"只能一个字一个字读。分隔符用边框色压下去，别抢视线。 */
+/* Colour the "folder · session · path · rule" line of the event list by segment: with the whole line in grey, finding "which project, which rule"
+   among hundreds of records meant reading character by character. Separators are muted with the border colour so they do not draw the eye. */
 .log-item .cwd .folder { color: var(--magenta); font-weight: 600; }
 .log-item .cwd .sid { font-family: Menlo, Consolas, monospace; color: var(--text-dim); }
 .log-item .cwd .path { color: var(--text); }
@@ -942,7 +942,7 @@ html, body {
 .tok-path { color: var(--cyan); }
 .tok-file { font-weight: 700; background: color-mix(in srgb, var(--yellow) 22%, transparent); padding: 0 2px; border-radius: 3px; }
 
-/* ---------- 状态信息 ---------- */
+/* ---------- Status ---------- */
 .status-board { display: flex; flex-direction: column; gap: 8px; }
 .status-row {
   display: flex;
@@ -968,11 +968,11 @@ html, body {
 .status-row .seg.dead { color: var(--text-dim); text-decoration: line-through; }
 
 @media (max-width: 900px) {
-  /* #tabs 那条 order:3 + flex:1 1 100% 的规则想让导航单独换到自己一整行，
-     但 #topbar 本身一直没设 flex-wrap，父容器不允许换行，子元素设 flex-basis:100%
-     也没用——挤在同一行里的结果就是 #tabs 自己的按钮被迫在一个很窄的列里各种叠着换行，
-     整个顶栏被撑得很高，把下面页面内容往下顶、跟其它元素挤在一起，看着就像乱套/
-     "下拉框和内容重叠"。根因在这，不是哪个具体下拉框的问题。 */
+  /* The #tabs rule with order:3 + flex:1 1 100% is meant to move the navigation onto its own full row,
+     but #topbar never set flex-wrap, so the parent does not allow wrapping and flex-basis:100% on the child
+     does nothing. Squeezed into one row, #tabs' own buttons were forced to wrap and stack in a very narrow column,
+     stretching the top bar very tall, pushing the page content down and crowding other elements, which looked like a mess /
+     "dropdown overlapping content". This is the root cause, not a problem with any particular dropdown. */
   #topbar { flex-wrap: wrap; }
   #tabs { order: 3; flex: 1 1 100%; }
   #sidebar { flex: 0 0 auto; max-height: 160px; }
@@ -980,7 +980,7 @@ html, body {
   #sidebar { border-right: none; border-bottom: 1px solid var(--border); }
 }
 
-/* ---------- 空状态 / 加载态 / 错误提示 ---------- */
+/* ---------- Empty state / loading state / error banner ---------- */
 .empty-state {
   color: var(--text-dim);
   font-size: 0.8929rem;
@@ -993,10 +993,10 @@ html, body {
   padding: 10px;
 }
 
-/* 同一类 bug 又一次：这几个元素都写了不带 [hidden] 条件的 display:flex，优先级
-   比浏览器默认的 [hidden]{display:none} 高，导致 JS 设置 .hidden = true 完全不
-   起作用——点"知道了"关不掉错误提示条，就是这个原因。加一条 [hidden] 规则
-   （class/id + 属性选择器，优先级比原来那条更高）覆盖回去。 */
+/* Another bug of the same kind: these elements all set display:flex without a [hidden] condition, which has higher specificity
+   than the browser default [hidden]{display:none}, so setting .hidden = true in JS had no
+   effect at all. That is why clicking "Got it" did not dismiss the error banner. An extra [hidden] rule
+   (class/id + attribute selector, higher specificity than the original) overrides it back. */
 .error-banner {
   background: #3a1414;
   color: #ffb4b4;
@@ -1035,8 +1035,8 @@ html, body {
 }
 #network-map-canvas { width: 100%; height: 100%; display: block; }
 
-/* 操作时间线：泳道数量不固定，画布高度 = 泳道数 × 行高（由 session-timeline.js 设置），
-   外层容器限高 + 纵向滚动，会话多的时候不会把整页撑得很长。 */
+/* Timeline: the number of lanes varies, canvas height = lanes × row height (set by session-timeline.js);
+   the outer container has a max height + vertical scrolling, so many sessions do not make the page very long. */
 #timeline-wrap {
   position: relative;
   width: 100%;
@@ -1070,7 +1070,7 @@ html, body {
 .timeline-tooltip[hidden] { display: none; }
 .timeline-tooltip .tt-title { font-weight: 600; margin-bottom: 2px; word-break: break-all; }
 
-/* ---------- 会话操作流程图（session-flow.js） ---------- */
+/* ---------- Session flow chart (session-flow.js) ---------- */
 #flow-section[hidden] { display: none; }
 #flow-section { margin-top: 18px; }
 .flow-head { align-items: center; }
@@ -1217,9 +1217,9 @@ html, body {
 .geo-acc-badge.geo-acc-city { background: rgba(80, 200, 120, 0.15); color: #6fe0a0; border: 1px solid rgba(80, 200, 120, 0.35); }
 .geo-acc-badge.geo-acc-country { background: rgba(255, 200, 80, 0.15); color: #ffd479; border: 1px solid rgba(255, 200, 80, 0.35); }
 .geo-acc-badge.geo-acc-none { background: rgba(150, 150, 150, 0.15); color: #aaa; border: 1px solid rgba(150, 150, 150, 0.35); }
-/* 命令文本推断出来的网络目标（wget/curl/git clone/ssh/scp…），不是系统层探针实测
-   到的真实连接——跟真实流量数据混在同一张表/同一张地图里，靠这个小标签区分，
-   不能让人误以为是探针确认过的流量。 */
+/* Network targets inferred from command text (wget/curl/git clone/ssh/scp…), not real connections measured by
+   the system-layer probe. They share the same table/map with real traffic data, and this small tag tells them apart
+   so nobody mistakes them for probe-confirmed traffic. */
 .map-legend-dot {
   display: inline-block;
   width: 9px;
@@ -1256,15 +1256,15 @@ html, body {
   font-weight: 700;
   border-color: var(--red);
 }
-/* 截屏详情里的事件类型徽章按"是不是真的截了屏"上色：真截屏三种各给一个实心色
-   （越像"抓走了屏幕内容"越靠红），"只是打开了一张图片"用中性描边，一眼能扫开。
-   这几个 --badge-* 是不随主题变的语义色，跟日志列表里的风险/操作标签同一套。 */
+/* Event type badges in the screen-capture details are coloured by "was a screenshot really taken": the three real capture kinds each get a solid colour
+   (the more it looks like "the screen contents were taken", the closer to red); "just opened an image" gets a neutral outline, so they separate at a glance.
+   These --badge-* are theme-independent semantic colours, the same set as the risk/operation tags in the log list. */
 .dd-badge-category.shot-kind-cliTool { background: var(--badge-danger); color: #fff; border-color: var(--badge-danger); font-weight: 700; }
 .dd-badge-category.shot-kind-headless { background: var(--badge-orange); color: #2b1300; border-color: var(--badge-orange); font-weight: 700; }
 .dd-badge-category.shot-kind-vm { background: var(--badge-yellow); color: #4a3900; border-color: var(--badge-yellow); font-weight: 700; }
 .dd-badge-category.shot-kind-mcp { background: var(--badge-purple); color: #2a0a3d; border-color: var(--badge-purple); font-weight: 700; }
 .dd-badge-category.shot-kind-imageRead { background: var(--badge-blue); color: #fff; border-color: var(--badge-blue); font-weight: 700; }
-/* 顶部的分类小计卡用同色数字呼应下面的徽章 */
+/* The category subtotal cards at the top echo the badges below with numbers in the same colour */
 .card-num.shot-kind-cliTool { color: var(--badge-danger); }
 .card-num.shot-kind-headless { color: var(--badge-orange); }
 .card-num.shot-kind-vm { color: var(--yellow); }
@@ -1280,7 +1280,7 @@ html, body {
   flex: 0 0 auto;
 }
 
-/* ---------- 模态框 ---------- */
+/* ---------- Modal ---------- */
 .modal-backdrop {
   position: fixed;
   inset: 0;
@@ -1315,7 +1315,7 @@ html, body {
 .modal input[type="text"]:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 
-/* ---------- 外观设置弹窗（主题/字体/字号）---------- */
+/* ---------- Appearance settings dialog (theme / font / font size) ---------- */
 .field { margin-bottom: 16px; }
 .field > span { display: block; font-size: 0.8571rem; color: var(--text-dim); margin-bottom: 6px; }
 .field select {
@@ -1356,7 +1356,7 @@ html, body {
   margin-bottom: 4px;
 }
 
-/* ---------- 新建会话弹窗里的目录浏览器 ---------- */
+/* ---------- Directory browser in the new session dialog ---------- */
 .cwd-input-row { display: flex; gap: 8px; align-items: flex-start; }
 .cwd-input-row input[type="text"] { flex: 1 1 auto; }
 .cwd-input-row button { flex: 0 0 auto; width: auto; white-space: nowrap; }
@@ -1409,9 +1409,9 @@ html, body {
 .btn-danger:hover { filter: brightness(1.1); }
 
 /* ---------- Claude Tap ---------- */
-/* 工具栏要能适应窄窗口：允许换行，会话下拉框推到最右边（跟标题/开关分开一组），
-   meta 信息（行数 + transcript 完整路径，可能很长）单独占一整行、超宽就省略号截断，
-   完整路径放 title 属性，鼠标悬停能看到。 */
+/* The toolbar must fit narrow windows: wrapping allowed, the session dropdown pushed to the far right (a separate group from the title/switch),
+   the meta info (line count + full transcript path, which can be long) on its own full row, truncated with an ellipsis when too wide,
+   with the full path in the title attribute, visible on hover. */
 #view-tap .logs-toolbar { flex-wrap: wrap; }
 #view-tap #tap-session-select { margin-left: auto; order: 1; }
 #tap-meta {
@@ -1431,10 +1431,10 @@ html, body {
   padding: 3px 6px;
   max-width: 360px;
 }
-/* 跟 #view-logs.active 是同一个道理：工具栏（会话选择下拉）要固定在顶部不随内容滚走，
-   只有下面这坨对话内容自己滚。之前没有单独给 #view-tap 定过 display，整节内容跟着
-   .view 那条通用规则整体滚动，选完会话之后内容一多，工具栏（想切换到别的会话的按钮）
-   就被卷到看不见的地方去了——这就是"选择其它会话的按钮被顶开"这个 bug。 */
+/* Same reason as #view-logs.active: the toolbar (session dropdown) must stay fixed at the top instead of scrolling with the content,
+   and only the conversation content below scrolls. #view-tap never had its own display, so the whole section
+   scrolled under the generic .view rule, and once a session with lots of content was chosen, the toolbar (the control for switching to another session)
+   was scrolled out of sight. That was the "the button for choosing another session gets pushed away" bug. */
 #view-tap.active { display: flex; flex-direction: column; }
 .tap-list {
   flex: 1 1 auto;
@@ -1467,8 +1467,8 @@ html, body {
 
 .tap-block { margin-top: 4px; word-break: break-word; white-space: pre-wrap; }
 .tap-text { color: var(--text); }
-/* 默认折叠只露出 4 行（后端其实已经把完整思考内容发下来了），"显示思考详情"开关
-   打开时 .tap-list 会带上 show-thinking-detail，撤掉高度限制展开全部。 */
+/* Collapsed by default to 4 lines (the backend actually sends the full thinking content); when the "Show thinking details" switch
+   is on, .tap-list gets show-thinking-detail, which lifts the height limit and expands everything. */
 .tap-thinking {
   color: var(--text-dim);
   font-style: italic;
@@ -1509,7 +1509,7 @@ html, body {
 .tap-image { color: var(--text-dim); }
 .tap-unknown { color: var(--text-dim); }
 
-/* ---------- 终端网格视图（多 agent 同屏，herdr 风格） ---------- */
+/* ---------- Terminal grid view (several agents on one screen, herdr style) ---------- */
 #terminal-grid-pane { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; padding: 8px; min-height: 0; }
 #terminal-grid-pane[hidden] { display: none; }
 .grid-hint { flex: 0 0 auto; color: var(--text-dim); font-size: 0.8214rem; padding: 4px 6px 8px; }
@@ -1554,14 +1554,14 @@ html, body {
   grid-column: 1 / -1;
 }
 
-/* ---------- 首页下钻详情弹窗 ---------- */
+/* ---------- Home drill-down details dialog ---------- */
 .modal.modal-wide { width: min(760px, calc(100vw - 32px)); max-height: 80vh; display: flex; flex-direction: column; }
-/* 下钻弹窗装的是多列数据表——会话列表就有 8 列（完整工作路径、36 位 UUID、时间范围…），
-   760px 根本排不下：列头会被压成一列一个字、UUID 折成四行。它跟"选择文件夹"那种窄弹窗
-   共用 .modal-wide，所以这里单独放宽，并允许窄屏下表格横向滚动而不是继续挤。 */
+/* The drill-down dialog holds multi-column data tables; the session list alone has 8 columns (full working path, 36-char UUID, time range...),
+   which cannot fit in 760px: column headers get squeezed to one character per line and UUIDs wrap to four lines. It shares
+   .modal-wide with narrow dialogs like "choose folder", so it is widened separately here, and on narrow screens the table scrolls horizontally instead of squeezing further. */
 #drilldown-modal .modal { width: min(1400px, calc(100vw - 48px)); max-height: 86vh; }
 .drilldown-body { overflow: auto; }
-/* 表头永远不在词中间断行 */
+/* Table headers never break mid-word */
 .dd-table th { white-space: nowrap; }
 .modal-header-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
 .modal-header-row h3 { margin: 0; }
@@ -1570,8 +1570,8 @@ html, body {
 .dd-table { width: 100%; border-collapse: collapse; font-size: 0.8571rem; }
 .dd-table th { text-align: left; color: var(--text-dim); font-weight: 600; padding: 6px 8px; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--bg-panel); }
 .dd-table td { padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
-/* 表格里两类特殊单元格：短标签（时间/结果/处理方式）不折行；长文本（匹配内容/回答）
-   限宽 + 省略号，完整内容在 title 里悬停看，不让一列把整张表撑歪。 */
+/* Two kinds of special table cells: short labels (time/result/handling) do not wrap; long text (matched content/answer)
+   has a max width + ellipsis, with the full content in title on hover, so one column cannot skew the whole table. */
 .dd-table td.dd-nowrap { white-space: nowrap; }
 .dd-table td.dd-clip { max-width: 0; width: 24%; min-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dd-table tr:hover td { background: var(--bg-elevated); }
@@ -1582,9 +1582,9 @@ html, body {
 .dd-group-title .n { color: var(--accent); }
 .dd-row-clickable { cursor: pointer; }
 
-/* 额度百分比进度条——参考用户给的霓虹进度条图：圆角胶囊 + 发光描边 + 渐变填充，
-   颜色跟着 severity 走（normal/warning/critical），三个主题色变量各自出一个渐变，
-   不是新引入的固定色，跟着当前配色主题联动。 */
+/* Quota percentage progress bar, modelled on the user's neon progress bar picture: rounded pill + glowing outline + gradient fill,
+   colour follows severity (normal/warning/critical), each of the three theme colour variables gives a gradient,
+   with no new fixed colours, so it follows the current colour theme. */
 .neon-bar-cell { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
 .neon-bar {
   position: relative;
@@ -1607,8 +1607,8 @@ html, body {
 .neon-bar.sev-critical .neon-bar-fill { background: linear-gradient(90deg, color-mix(in srgb, var(--red) 45%, white), var(--red)); }
 .neon-bar.sev-critical ~ .neon-bar-pct { color: var(--red); }
 
-/* 状态信息/首页账号额度卡片用的加长、更饱和版本——渐变起点直接从主题色本身开始
-   （不像 limits 表格那个小号版本先掺 45% 白），发光描边也更明显。 */
+/* The longer, more saturated version used by the Status / Home account quota cards: the gradient starts from the theme colour itself
+   (unlike the small version in the limits table, which first mixes in 45% white), and the glowing outline is stronger. */
 .neon-bar.neon-bar-lg { width: 220px; max-width: 100%; height: 20px; margin: 8px 0 4px; }
 .neon-bar.neon-bar-lg.sev-normal { box-shadow: 0 0 10px color-mix(in srgb, var(--green) 65%, transparent); }
 .neon-bar.neon-bar-lg.sev-normal .neon-bar-fill { background: linear-gradient(90deg, color-mix(in srgb, var(--green) 75%, white), var(--green)); }
@@ -1617,36 +1617,36 @@ html, body {
 .neon-bar.neon-bar-lg.sev-critical { box-shadow: 0 0 10px color-mix(in srgb, var(--red) 65%, transparent); }
 .neon-bar.neon-bar-lg.sev-critical .neon-bar-fill { background: linear-gradient(90deg, color-mix(in srgb, var(--red) 75%, white), var(--red)); }
 
-/* 重置时间那一栏的"窗口已过去多少"进度条——紫色，跟额度百分比那几个红黄绿的条
-   区分开（不是同一个语义，一个是用量健康度，一个是时间进度），用主题自己的
-   --magenta 变量，不是新写死的固定色。 */
+/* The "how much of the window has passed" progress bar in the reset time column: purple, to set it apart from the red/yellow/green quota percentage bars
+   (a different meaning: one is usage health, the other is time progress); it uses the theme's own
+   --magenta variable, not a new hard-coded colour. */
 .neon-bar.sev-purple { border: 1px solid color-mix(in srgb, var(--magenta) 55%, transparent); box-shadow: 0 0 6px color-mix(in srgb, var(--magenta) 45%, transparent); }
 .neon-bar.sev-purple .neon-bar-fill { background: linear-gradient(90deg, color-mix(in srgb, var(--magenta) 45%, white), var(--magenta)); }
 .neon-bar.sev-purple ~ .neon-bar-pct { color: var(--magenta); }
 
-/* 沙漏——重置倒计时的可视化，沙子从上格漏到下格的比例 = 这个窗口已经过去的时间占比
-   （5 小时窗口 / 7 天周窗口，按 resetsAt 反推），跟百分比数字一起摆在卡片说明文字
-   旁边，不需要额外看文字就能感觉到"这个窗口快满了没有"。 */
-/* 重置时间那一行：沙漏放大之后不能再内联在文字流里（会把行高撑歪、基线也对不齐），
-   改成 flex 一行，沙漏和文字各自垂直居中。 */
+/* Hourglass: a visual of the reset countdown; the share of sand that has fallen from the top bulb to the bottom = the share of this window already elapsed
+   (5-hour window / 7-day weekly window, derived from resetsAt). It sits next to the card's caption with the percentage,
+   so you can feel "is this window almost full" without reading any more text. */
+/* The reset time row: with the larger hourglass it can no longer sit inline in the text flow (it would skew the line height and misalign the baseline),
+   so it becomes a flex row with the hourglass and text each vertically centred. */
 .reset-row { display: flex; align-items: center; gap: 8px; margin-top: 5px; }
 .reset-row > span { min-width: 0; }
 .hourglass-wrap { display: inline-flex; align-items: center; flex: 0 0 auto; }
 .hourglass-svg { flex: 0 0 auto; }
-/* 玻璃轮廓比原来细一点、透一点——沙漏放大之后，原来那个 stroke-width 会显得笨重。 */
+/* The glass outline is a bit thinner and more transparent than before: with the larger hourglass the old stroke-width looks heavy. */
 .hourglass-svg .hg-glass {
   fill: color-mix(in srgb, var(--text-dim) 8%, transparent);
   stroke: color-mix(in srgb, var(--text-dim) 85%, transparent);
   stroke-width: 1.8;
   stroke-linejoin: round;
 }
-/* 上下托板：实心、圆角，给沙漏一个"立在那儿"的重量感，原来只有一个光秃秃的轮廓。 */
+/* Top and bottom plates: solid, rounded, giving the hourglass a sense of "standing there"; before it was only a bare outline. */
 .hourglass-svg .hg-cap { fill: color-mix(in srgb, var(--text-dim) 75%, transparent); }
-/* 沙子的渐变：上浅下深，两个 stop 都从 --accent 算出来，换主题自动跟着走。 */
+/* Sand gradient: light at the top, dark at the bottom; both stops are derived from --accent, so they follow theme changes. */
 .hourglass-svg .hg-stop-a { stop-color: color-mix(in srgb, var(--accent) 55%, white); }
 .hourglass-svg .hg-stop-b { stop-color: var(--accent); }
-/* 正在漏下去的那道细沙。虚线 + 循环位移做出"往下掉"的观感，只在真的还在漏的时候才
-   会被画出来（见 app.js 的 streaming 判断），漏完了就没有这个元素，不会空转动画。 */
+/* The thin stream of sand falling. A dashed line + looping offset gives a "falling" look; it is drawn only while sand is really
+   still falling (see the streaming check in app.js); when it has run out the element is gone, so no animation runs idle. */
 .hourglass-svg .hg-stream {
   fill: var(--accent);
   opacity: 0.85;
@@ -1657,7 +1657,7 @@ html, body {
   from { transform: translateY(0); }
   to   { transform: translateY(4px); }
 }
-/* 跟随系统"减少动态效果"偏好——这是个装饰性动画，不该强加给对动效敏感的人。 */
+/* Follow the system "reduce motion" preference: this is a decorative animation and should not be forced on people sensitive to motion. */
 @media (prefers-reduced-motion: reduce) {
   .hourglass-svg .hg-stream { animation: none; }
 }

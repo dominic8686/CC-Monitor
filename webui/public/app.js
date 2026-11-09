@@ -1,8 +1,8 @@
 "use strict";
 
-// toLocaleTimeString() 不传参数的话是不是 12 小时制（"7:48:25 PM"）取决于浏览器的
-// locale 设置，不受这个应用自己的中英文切换控制——不管界面语言选的是中文还是英文，
-// 都统一用 24 小时制，不跟着浏览器/系统 locale 飘。
+// Called without arguments, toLocaleTimeString() picks 12-hour ("7:48:25 PM") or 24-hour time
+// from the browser locale, not from this app's own language toggle. Always use 24-hour time,
+// whichever UI language is selected, so the format does not drift with the browser/OS locale.
 function fmtTime24(date) {
   return date.toLocaleTimeString(undefined, { hour12: false });
 }
@@ -30,12 +30,20 @@ function riskLabel(risk) {
 function stageLabel2(source) {
   return t("stage." + source) || source;
 }
-// 工具名（Bash/Write/...）能翻译就翻译；系统层观测事件、未知/自定义工具这些服务端
-// 拼出来的复合文案暂时保留原样（中文兜底），不是每一条都做了双语。
+// Translate tool names (Bash/Write/...) when we can; compound labels the server builds, such as
+// system-layer observation events and unknown/custom tools, stay as sent for now (fallback); not every one is bilingual.
 function toolLabel(toolName, serverLabel) {
   return KNOWN_TOOLS.has(toolName) ? t("tool." + toolName) : serverLabel;
 }
-const EXTRA_LABEL_MAP = { 结果: "extra.result", 输出: "extra.output", 自定义压缩指令: "extra.compactInstructions" };
+// Keys are the labels the server emits; the Chinese ones stay so older server builds still match.
+const EXTRA_LABEL_MAP = {
+  Result: "extra.result",
+  Output: "extra.output",
+  "Custom compaction instructions": "extra.compactInstructions",
+  结果: "extra.result",
+  输出: "extra.output",
+  自定义压缩指令: "extra.compactInstructions",
+};
 function translateExtraLabel(label) {
   return EXTRA_LABEL_MAP[label] ? t(EXTRA_LABEL_MAP[label]) : label;
 }
@@ -49,10 +57,10 @@ function formatUptime(ms) {
   return mins < 1 ? t("terminal.justNow") : t("terminal.minutesAgo", { n: mins });
 }
 
-// "最近活跃"用的措辞跟 formatUptime()（"运行了 N 分钟"）不是一回事——这里要的是
-// "上次有动静是 N 分钟/小时/天前"，末尾得带"前"/"ago"，不能共用同一个 i18n key。
-// 会话经常一放就是几百分钟甚至好几天没再动过，只用分钟计数的话数字会大到没意义
-// （"3887 分钟前"），超过 60 分钟换算成小时、超过 24 小时换算成天。
+// "Last active" wording is not the same as formatUptime() ("running for N minutes"): here we
+// want "last activity N minutes/hours/days ago", ending in "ago", so it cannot share an i18n key.
+// Sessions often sit untouched for hundreds of minutes or days, and a minute count alone gets
+// meaninglessly large ("3887 minutes ago"), so past 60 minutes switch to hours and past 24 hours to days.
 function formatAgo(ms) {
   if (ms === null || ms === undefined) return "-";
   const mins = Math.floor(ms / 60000);
@@ -64,8 +72,8 @@ function formatAgo(ms) {
   return t("drilldown.daysAgo", { n: days });
 }
 
-// 时长（秒）→ "7 天 12 小时" / "3 小时 42 分钟"。跟 formatAgo 的区别是它描述的是一段
-// 持续时间，不是"多久以前"，所以不带"前"字。
+// Duration (seconds) -> "7 d 12 h" / "3 h 42 min". Unlike formatAgo this describes a span of
+// time, not "how long ago", so there is no "ago".
 function formatDuration(sec) {
   if (sec === null || sec === undefined) return "-";
   if (sec < 60) return t("drilldown.duration.seconds", { s: Math.floor(sec) });
@@ -76,23 +84,23 @@ function formatDuration(sec) {
   return t("drilldown.duration.days", { d: Math.floor(hours / 24), h: hours % 24 });
 }
 
-// "生命体征"指示器：working/idle/dead 三态复用同一套心电监护仪视觉——见 style.css
-// 顶部那段注释。心形和锯齿波形都是通用图形符号，不是照抄哪个具体图标库的资源。
+// "Vital signs" indicator: working/idle/dead share one heart-monitor visual; see the comment
+// at the top of style.css. The heart and the sawtooth wave are generic symbols, not copied from any icon library.
 const VITAL_HEART_PATH =
   "M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z";
 const VITAL_ECG_PATH = "M0,7 L11,7 L14,1 L18,13 L21,7 L26,7 L29,3 L32,11 L35,7 L40,7";
 const VITAL_ECG_FLAT_PATH = "M0,7 L40,7";
-const VITAL_FADE_MS = 60 * 60 * 1000; // 1 小时内颜色/波形连续衰减
-const VITAL_WORKING_MS = 5 * 60 * 1000; // 只有这个窗口内才有跳动/滚动动画，跟后端 WORKING_THRESHOLD_MS 对齐
-// idle（进程还活着，只是最近没动静）哪怕过了 1 小时的衰减窗口也留一点底色——
-// 不然长时间挂着没操作的会话跟"进程已经退出"的 dead 在视觉上就完全混成一回事了，
-// 等于白做这个区分"还活着但闲置"和"已经不在了"的功能（真实会话经常一放就是
-// 几百分钟甚至几天，绝大多数行都会落进这个区间）。dead 没有这个底色，就是纯灰。
+const VITAL_FADE_MS = 60 * 60 * 1000; // colour/waveform fade continuously over 1 hour
+const VITAL_WORKING_MS = 5 * 60 * 1000; // beat/scroll animation only within this window; matches the backend WORKING_THRESHOLD_MS
+// idle (process still alive, just quiet lately) keeps a faint tint even past the 1-hour fade
+// window. Otherwise a session left open without activity looks exactly like a dead one (process
+// exited), which defeats the point of telling "alive but idle" apart from "gone" (real sessions
+// often sit for hundreds of minutes or days, so most rows land in this range). dead has no tint; it is plain grey.
 const VITAL_IDLE_FLOOR = 0.14;
 
-// heat：0~1，agoMs 越小越接近 1（最深红/摆动最大），working/idle 状态下随时间
-// 在 1 小时内线性衰减；idle 衰减到底之后停在 VITAL_IDLE_FLOOR，不会跟 dead 一样
-// 归零。dead 或者压根没有时间戳的（不知道多久没动过了）直接按 0 处理。
+// heat: 0..1, closer to 1 the smaller agoMs is (deepest red / largest swing). For working/idle it
+// fades linearly over 1 hour; idle stops at VITAL_IDLE_FLOOR after fading instead of dropping to 0
+// like dead. dead, or no timestamp at all (unknown time since last activity), counts as 0.
 function vitalHeat(status, agoMs) {
   if (status === "dead" || agoMs === null || agoMs === undefined) return 0;
   const raw = Math.max(0, 1 - agoMs / VITAL_FADE_MS);
@@ -105,11 +113,11 @@ function hexToRgb(hex) {
   const n = parseInt(m[1], 16);
   return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
 }
-// 之前按 heat 在红色/灰色之间插值是交给 CSS 的 color-mix() 做的——在不支持
-// color-mix() 的浏览器上这个属性整体计算失败，working/idle/dead 三态会退化成
-// 同一种继承色（看起来"全灰"，包括刚活跃的 working 也不例外，这正是这个 bug
-// 反馈的现象）。干脆不依赖 color-mix()，直接在 JS 里读主题色手算插值后的
-// rgb()，兼容性只取决于 getComputedStyle，不受这个较新 CSS 函数支不支持影响。
+// Interpolating between red and grey by heat used to be left to CSS color-mix(). In browsers
+// without color-mix() the whole property fails to compute and working/idle/dead all fall back to
+// the same inherited colour (everything looks grey, even a freshly active working session, which is
+// exactly the reported bug). So we no longer depend on color-mix(): JS reads the theme colours and
+// computes the interpolated rgb() itself; compatibility then only depends on getComputedStyle.
 function vitalColor(heat) {
   const cs = getComputedStyle(document.documentElement);
   const red = hexToRgb(cs.getPropertyValue("--red")) || [239, 68, 68];
@@ -124,9 +132,9 @@ function renderVital(status, agoMs) {
   const s = status || "idle";
   const label = t("terminal.status." + s);
   const heat = vitalHeat(s, agoMs);
-  // 心电图是否拉直线看的是真实经过的时间（满 1 小时就拉直），跟上面带了个底色
-  // 的 heat 是两码事——不能用 heat<=0.02 判断了，idle 有底色之后 heat 永远不会
-  // 真的到 0，得直接看 agoMs。
+  // Whether the ECG goes flat depends on the real elapsed time (flat after a full hour), which is
+  // not the same as the tinted heat above. heat<=0.02 no longer works: with the idle tint, heat never
+  // actually reaches 0, so check agoMs directly.
   const flat = s === "dead" || agoMs === null || agoMs === undefined || agoMs >= VITAL_FADE_MS;
   const animated = s === "working" && agoMs !== null && agoMs !== undefined && agoMs < VITAL_WORKING_MS;
   const cls = ["vital", `vital-${s}`, animated ? "vital-animated" : "", flat ? "vital-flat" : ""].filter(Boolean).join(" ");
@@ -138,7 +146,7 @@ function renderVital(status, agoMs) {
     </span>`;
 }
 
-// ---------- 错误提示条：网络/接口失败时给出可见反馈，而不是静默不动 ----------
+// ---------- Error banner: visible feedback when the network/API fails, instead of silently doing nothing ----------
 const errorBanner = document.getElementById("error-banner");
 let errorHideTimer = null;
 function showError(message) {
@@ -180,7 +188,7 @@ async function api(path, opts) {
   return res.json();
 }
 
-// ---------- 通用确认弹窗（替代 window.confirm，风格跟页面一致） ----------
+// ---------- Generic confirmation dialog (replaces window.confirm, styled like the page) ----------
 const confirmModal = document.getElementById("confirm-modal");
 function confirmDialog(title, body) {
   return new Promise((resolve) => {
@@ -202,7 +210,7 @@ function confirmDialog(title, body) {
   });
 }
 
-// ---------- 顶部导航 / 页面切换 ----------
+// ---------- Top navigation / page switching ----------
 document.querySelectorAll(".tab-btn:not(.nav-external-link)").forEach((btn) => {
   btn.addEventListener("click", () => {
     document.querySelectorAll(".tab-btn:not(.nav-external-link)").forEach((b) => b.classList.remove("active"));
@@ -221,18 +229,18 @@ document.querySelectorAll(".tab-btn:not(.nav-external-link)").forEach((btn) => {
       refreshApprovalHistory();
     }
     if (btn.dataset.tab === "network") {
-      // WebGL 画布只有在容器真正可见（.view.active，非 display:none）之后
-      // getBoundingClientRect() 才能量出正确尺寸，所以地图实例延到第一次真正
-      // 切进这个 tab 时才创建，创建完立刻按当前数据刷新一次。
+      // The WebGL canvas can only measure its size with getBoundingClientRect() once the container is
+      // really visible (.view.active, not display:none), so the map instance is created the first time
+      // this tab is actually opened, then immediately refreshed with the current data.
       ensureNetworkMap();
       refreshNetworkTraffic();
     }
-    // 画布同理：隐藏状态下量不出宽度，第一次切进来才创建
+    // Same for the canvas: it has no width while hidden, so create it on first entry
     if (btn.dataset.tab === "timeline") refreshTimeline();
   });
 });
 
-// ---------- 终端渲染：优先 WebGL(GPU)，失败自动退化成默认的 Canvas 渲染 ----------
+// ---------- Terminal rendering: prefer WebGL (GPU), fall back to the default Canvas renderer on failure ----------
 const term = new Terminal({
   fontFamily: "Menlo, Consolas, 'Courier New', monospace",
   fontSize: 13,
@@ -244,7 +252,7 @@ term.loadAddon(fitAddon);
 term.open(document.getElementById("terminal"));
 
 const gpuPill = document.getElementById("gpu-status");
-let gpuState = "detecting"; // 语言切换时要能重新套用当前状态对应的文案
+let gpuState = "detecting"; // on a language switch, re-apply the text for the current state
 function setGpuState(state) {
   gpuState = state;
   const map = { detecting: "gpu.detecting", webgl: "gpu.webgl", canvasNoWebgl: "gpu.canvasNoWebgl", canvasLost: "gpu.canvasLost" };
@@ -271,20 +279,20 @@ window.addEventListener("resize", () => {
   for (const pane of gridPanes.values()) pane.fitAddon.fit();
 });
 
-// ---------- 会话管理（终端会话页） ----------
+// ---------- Session management (Terminals page) ----------
 let currentSessionId = null;
 let currentSocket = null;
 
-// 刷新网页只是重新加载了这个 JS 运行时，PTY 会话本身在服务端还活得好好的——但
-// currentSessionId 是个普通变量，刷新一次就归零，界面上看起来就跟"会话没了"一样，
-// 得手动去侧边栏重新点一下。存一份到 localStorage，刷新后自动重连回刚才那个会话。
+// Reloading the page only reloads this JS runtime; the PTY session is still alive on the server.
+// But currentSessionId is a plain variable that resets on reload, so the UI looks as if the session
+// were gone and you had to click it in the sidebar again. Keep a copy in localStorage and reconnect to it after reload.
 const LAST_SESSION_KEY = "cc-monitor-last-session-id";
 function rememberLastSession(id) {
   try {
     if (id) localStorage.setItem(LAST_SESSION_KEY, id);
     else localStorage.removeItem(LAST_SESSION_KEY);
   } catch (e) {
-    // localStorage 不可用（隐私模式等）不影响功能，只是刷新后不会自动重连
+    // localStorage unavailable (private mode etc.) does not break anything; we just do not reconnect after reload
   }
 }
 function getLastSession() {
@@ -378,9 +386,9 @@ term.onResize(({ cols, rows }) => {
   }
 });
 
-// ---------- 终端网格视图（herdr 风格：一个屏幕同时看/操作多个 agent） ----------
-// 跟上面的单会话视图是两套独立的 Terminal 实例 + WebSocket 连接，互不影响；
-// 切换视图不会打断另一边正在跑的会话。
+// ---------- Terminal grid view (herdr style: watch/drive several agents on one screen) ----------
+// Separate Terminal instances + WebSocket connections from the single-session view above; they do not
+// affect each other, and switching views does not interrupt sessions running in the other one.
 const gridPanes = new Map(); // sessionId -> { term, fitAddon, ws, el }
 let gridModeEnabled = false;
 let activeGridPaneId = null;
@@ -416,11 +424,11 @@ function createGridPane(s) {
   paneTerm.loadAddon(paneFit);
   paneTerm.open(bodyEl);
   try {
-    // 浏览器对同时存在的 WebGL 上下文数量有上限（通常十几个），网格面板一多
-    // 拿不到就直接退化成 xterm.js 默认的 canvas 渲染，不影响功能，只是没那么快。
+    // Browsers cap the number of live WebGL contexts (usually a dozen or so). With many grid panes,
+    // when we cannot get one we fall back to xterm.js's default canvas renderer: it still works, just slower.
     paneTerm.loadAddon(new WebglAddon.WebglAddon());
   } catch (e) {
-    // ignore，canvas 兜底
+    // ignore; canvas is the fallback
   }
 
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
@@ -499,8 +507,8 @@ function syncGridPanes(sessions) {
       grid.appendChild(pane.el);
       if (!firstNew) firstNew = pane;
     } else if (s.alive && gridPanes.has(s.id)) {
-      // 已经存在的面板不用重建，只更新状态点——createGridPane() 只在第一次
-      // 出现时跑一遍，后续每次轮询靠这里把 working/blocked/idle 刷新上去。
+      // Existing panes are not rebuilt, only their status dot is updated: createGridPane() runs only the
+      // first time a pane appears; on each later poll this keeps working/blocked/idle up to date.
       const dot = gridPanes.get(s.id).el.querySelector('[data-role="status-dot"]');
       if (dot) {
         const status = s.status || "idle";
@@ -522,8 +530,8 @@ function syncGridPanes(sessions) {
   });
 }
 
-// 这个按钮的文案跟着 gridModeEnabled 这个 state 走，不能用静态的 data-i18n
-// （不然切语言的时候会被 applyStaticI18n 冲回"切换到网格视图"，不管当前到底是哪个视图）。
+// This button's text follows the gridModeEnabled state, so it cannot use a static data-i18n
+// (otherwise a language switch makes applyStaticI18n reset it to "Switch to grid view" whichever view is active).
 function syncGridToggleBtnText() {
   document.getElementById("grid-toggle-btn").textContent = t(gridModeEnabled ? "terminal.toSingle" : "terminal.toGrid");
 }
@@ -550,15 +558,17 @@ const newSessionModal = document.getElementById("new-session-modal");
 const newSessionCwdInput = document.getElementById("new-session-cwd");
 const newSessionTitleEl = document.getElementById("new-session-title");
 const newSessionHintEl = document.getElementById("new-session-hint");
-// "新建会话"（自动敲 claude）和"新建窗口"（裸 shell，不进 Claude Code）共用同一个
-// 弹窗——挑目录这一步两边完全一样，没必要做成两个弹窗。靠这个变量记住是哪个按钮
-// 打开的，弹窗标题/说明文字跟着换，确认时决定要不要把 launchClaude:false 传给后端。
+// "New session" (types claude automatically) and "new window" (plain shell, no Claude Code) share one
+// dialog: picking a directory is identical for both, so two dialogs would be pointless. This variable
+// remembers which button opened it; the title/description follow it, and on confirm it decides whether
+// launchClaude:false is sent to the backend.
 let newSessionLaunchClaude = true;
 
-// 弹窗标题/说明文字是根据 newSessionLaunchClaude 这个"状态"动态选的，不是纯粹
-// 靠 data-i18n 静态属性翻译——切换语言时 applyStaticI18n() 只会把它们打回
-// data-i18n 属性里写死的默认文案（新建会话那版），跟 syncGridToggleBtnText() 这些
-// 处理"状态相关文案"的函数是同一个道理，得在语言切换后单独重新套一遍当前状态对应的文案。
+// The dialog title/description are picked from the newSessionLaunchClaude state, not translated purely
+// through static data-i18n attributes: on a language switch applyStaticI18n() would reset them to the
+// default text hard-coded in data-i18n (the new-session version). Same reasoning as
+// syncGridToggleBtnText() and the other state-dependent text functions: after a language switch the
+// text for the current state has to be re-applied separately.
 function syncNewSessionModalText() {
   if (newSessionModal.hidden) return;
   newSessionTitleEl.textContent = newSessionLaunchClaude ? t("modal.newSession.title") : t("modal.newWindow.title");
@@ -577,7 +587,7 @@ document.getElementById("new-session-cancel").addEventListener("click", () => {
   newSessionModal.hidden = true;
 });
 newSessionModal.addEventListener("click", (ev) => {
-  if (ev.target === newSessionModal) newSessionModal.hidden = true; // 点击背景关闭
+  if (ev.target === newSessionModal) newSessionModal.hidden = true; // clicking the backdrop closes it
 });
 async function createSessionFromModal() {
   const cwd = newSessionCwdInput.value.trim();
@@ -597,11 +607,11 @@ newSessionCwdInput.addEventListener("keydown", (ev) => {
   if (ev.key === "Enter") createSessionFromModal();
 });
 
-// ---------- "新建会话"弹窗里的文件夹浏览器：选服务器上的目录，不是浏览器本机的 ----------
-// 这个终端是在跑 webui 的那台机器上开 shell，能选的目录得是那台机器上的路径；
-// 用原生 <input type=file webkitdirectory> 选到的是打开浏览器那台机器的文件——
-// 如果是远程访问这个 Web UI，两边根本不是同一台机器，选出来的路径没有意义，
-// 所以这里是自己做的一个服务端目录浏览接口 + 简单列表 UI，不是调用浏览器原生控件。
+// ---------- Folder browser in the "new session" dialog: picks a directory on the server, not on the browser's machine ----------
+// This terminal opens a shell on the machine running the webui, so the directory must be a path on
+// that machine. A native <input type=file webkitdirectory> picks files on the machine running the
+// browser; when the Web UI is accessed remotely those are not the same machine and the path is
+// meaningless. So this is our own server-side directory listing API + a simple list UI, not a native browser control.
 const dirBrowserModal = document.getElementById("dir-browser-modal");
 const dirBrowserPathEl = document.getElementById("dir-browser-path");
 const dirBrowserListEl = document.getElementById("dir-browser-list");
@@ -648,7 +658,7 @@ document.addEventListener("keydown", (ev) => {
   if (!drilldownModal.hidden) drilldownModal.hidden = true;
 });
 
-// 当前选中会话上方的状态条（cwd / git 分支 / 存活时长），来自 /api/status。
+// Status bar above the selected session (cwd / git branch / uptime), from /api/status.
 async function refreshTerminalStatusline() {
   if (!currentSessionId) return;
   const status = await api("/api/status");
@@ -668,20 +678,21 @@ async function refreshTerminalStatusline() {
   `;
 }
 
-// ---------- Log 审计页 ----------
+// ---------- Audit Log page ----------
 let lastLogId = 0;
 const logFilter = document.getElementById("log-session-filter");
 
-// 只看 session id 完全没法识别是哪个会话——同一屏幕上好几个 8 位十六进制字符串
-// 长得都差不多。前面加上文件夹名（cwd 最后一段）和模型短名，才是人真正会用来
-// 区分"这是哪个会话"的信息；完整 cwd 和完整 id 放 title，鼠标悬停可以看到。
+// A session id alone does not identify the session: several 8-digit hex strings on one screen look
+// alike. Prefixing the folder name (last cwd segment) and the short model name gives the information
+// people actually use to tell sessions apart; the full cwd and id go in title, visible on hover.
 function folderName(cwd) {
-  if (!cwd) return "(未知目录)";
+  if (!cwd) return "(unknown directory)";
   const parts = cwd.split("/").filter(Boolean);
   return parts.length ? parts[parts.length - 1] : cwd;
 }
-// Session ID 前面带上文件夹名——光看一串截断的 UUID 认不出是哪个会话，folderName(cwd)
-// 一般比 session_id 好记得多，两个拼一起显示（表格窄了的话完整 cwd 还有单独一列/title）
+// Prefix the Session ID with the folder name: a truncated UUID alone does not tell you which session
+// it is, and folderName(cwd) is usually far easier to remember than session_id, so show both
+// (when the table is narrow the full cwd still has its own column/title).
 function sessionIdCell(sessionId, cwd) {
   const idPart = sessionId ? escapeHtml(sessionId.slice(0, 8)) + "…" : "-";
   if (!cwd) return idPart;
@@ -701,9 +712,9 @@ function sessionLabel(r) {
 async function refreshLogSessionOptions() {
   const rows = await api("/api/log-sessions");
   if (!rows) return [];
-  // 重建 <select> 的 <option> 列表在原生下拉框还开着的时候会把它关掉（哪怕内容没变）——
-  // 用户正在这个下拉框上（focus 在它身上，不管下拉是不是真的展开着）就先跳过这次重建，
-  // 免得手一伸过去选项就被刷没了；反正 8 秒后还会再刷一次，晚一点更新没关系。
+  // Rebuilding a <select>'s <option> list while the native dropdown is open closes it (even if nothing
+  // changed). If the user is on this dropdown (it has focus, whether or not it is expanded), skip this
+  // rebuild so the options do not vanish under their hand; it refreshes again 8 seconds later anyway.
   if (document.activeElement !== logFilter) {
     const current = logFilter.value;
     logFilter.innerHTML = `<option value="">${t("logs.allSessions")}</option>`;
@@ -727,16 +738,17 @@ logFilter.addEventListener("change", () => {
   pollLogs();
 });
 
-// 自动滚动到最新的开关：关掉之后新内容还是会照常拼进列表（不影响记录/实时刷新），
-// 只是不再把滚动条拽到底部，方便往上翻看历史内容时不被每次轮询打断。开关状态记在
-// localStorage 里，跟语言/主题一个存法。Log 审计和 Claude Tap 各有一个独立开关。
+// Auto-scroll-to-latest toggle: when off, new content is still appended to the list (recording and
+// live refresh are unaffected), but the scrollbar is no longer pulled to the bottom, so reading older
+// content is not interrupted by every poll. The state lives in localStorage, like language/theme.
+// Audit Log and Claude Tap each have their own toggle.
 function setupAutoscrollToggle(elementId, storageKey) {
   const el = document.getElementById(elementId);
   try {
     const saved = localStorage.getItem(storageKey);
     if (saved !== null) el.checked = saved === "1";
   } catch (e) {
-    // localStorage 不可用（隐私模式等）就用默认值，不影响功能
+    // localStorage unavailable (private mode etc.): use the default; nothing breaks
   }
   el.addEventListener("change", () => {
     try {
@@ -750,9 +762,10 @@ function setupAutoscrollToggle(elementId, storageKey) {
 const logAutoscrollToggle = setupAutoscrollToggle("log-autoscroll-toggle", "cc_monitor_log_autoscroll");
 const tapAutoscrollToggle = setupAutoscrollToggle("tap-autoscroll-toggle", "cc_monitor_tap_autoscroll");
 
-// "显示思考详情"开关：关（默认）时 .tap-thinking 只露出前几行、超出部分用 CSS 折叠；
-// 开的时候展开全部。后端现在本来就把完整思考内容发下来了（不是按开关状态单独请求），
-// 这里纯粹是前端 CSS 折叠/展开，切换瞬间生效，不用重新拉数据。
+// "Show thinking details" toggle: off (default) shows only the first few lines of .tap-thinking and
+// collapses the rest with CSS; on expands everything. The backend already sends the full thinking
+// content (not requested per toggle state), so this is a pure front-end CSS collapse/expand that
+// takes effect instantly without refetching.
 const tapThinkingDetailToggle = setupAutoscrollToggle("tap-thinking-detail-toggle", "cc_monitor_tap_thinking_detail");
 function applyThinkingDetailClass() {
   document.getElementById("tap-list").classList.toggle("show-thinking-detail", tapThinkingDetailToggle.checked);
@@ -760,8 +773,8 @@ function applyThinkingDetailClass() {
 tapThinkingDetailToggle.addEventListener("change", applyThinkingDetailClass);
 applyThinkingDetailClass();
 
-// 操作分类：读/写/编辑/执行/删除，用来给徽章挑颜色。删除没有专门的工具，
-// 跟首页文件操作统计用一样的近似识别方式——Bash 命令文本里带 rm/unlink/rmdir/shred。
+// Operation category: read/write/edit/exec/delete, used to pick the badge colour. There is no
+// dedicated delete tool; like the Home file-operation stats, we approximate it by rm/unlink/rmdir/shred in the Bash command text.
 function operationCategory(ev) {
   if (ev.toolName === "Read") return "read";
   if (ev.toolName === "Write") return "write";
@@ -817,23 +830,23 @@ async function pollLogs() {
   if (logAutoscrollToggle.checked) list.scrollTop = list.scrollHeight;
 }
 
-// ---------- Claude Tap：发给/收到模型的完整对话内容 ----------
+// ---------- Claude Tap: the full conversation sent to / received from the model ----------
 const tapSelect = document.getElementById("tap-session-select");
 const tapMeta = document.getElementById("tap-meta");
 const TAP_ALL_SESSIONS = "__all__";
 let tapNextLine = 0;
 let tapKnownSessions = [];
 
-// 跟终端会话那个"刷新页面就要重新选"是同一类问题：tapSelect.value 只是个 DOM 状态，
-// 刷新页面这个下拉框直接重新创建，之前选的会话就没了。存一份到 localStorage，
-// 下拉框第一次建好选项时（这次页面加载还没选过任何东西）就把上次选的那个带回来。
+// Same kind of problem as the terminal session "reload means pick again": tapSelect.value is only DOM
+// state, the dropdown is recreated on reload and the previous selection is lost. Keep a copy in
+// localStorage and restore it the first time the dropdown gets its options (nothing selected yet on this page load).
 const TAP_LAST_SESSION_KEY = "cc-monitor-last-tap-session";
 function rememberTapSession(id) {
   try {
     if (id) localStorage.setItem(TAP_LAST_SESSION_KEY, id);
     else localStorage.removeItem(TAP_LAST_SESSION_KEY);
   } catch (e) {
-    // localStorage 不可用不影响功能，只是刷新后不会自动带回来
+    // localStorage unavailable does not break anything; the selection just is not restored after reload
   }
 }
 function getLastTapSession() {
@@ -847,11 +860,11 @@ function getLastTapSession() {
 let tapOptionsBuiltOnce = false;
 function refreshTapSessionOptions(rows) {
   tapKnownSessions = rows;
-  // 同样的道理：下拉框正被用户操作（focus 在它上面）的时候不要重建 <option>，
-  // 不然选项会在他们眼皮底下被"刷新掉"——这正是这个开关要修的那个 bug。
+  // Same reasoning: do not rebuild the <option>s while the user is working the dropdown (it has focus),
+  // or the options get "refreshed away" in front of them, which is exactly the bug this guard fixes.
   if (document.activeElement === tapSelect) return;
-  // 不能拿 tapSelect.options.length === 0 判断"是不是第一次"——HTML 里本来就写死了
-  // 一个占位 <option>，这个条件永远为 false，得自己记一个标志位。
+  // Cannot use tapSelect.options.length === 0 to detect "first time": the HTML already has a hard-coded
+  // placeholder <option>, so that is never true; keep our own flag.
   const isFirstBuild = !tapOptionsBuiltOnce;
   tapOptionsBuiltOnce = true;
   const current = tapSelect.value;
@@ -874,14 +887,14 @@ function refreshTapSessionOptions(rows) {
   const restoreTarget = current || (isFirstBuild ? getLastTapSession() : null);
   if (restoreTarget && (restoreTarget === TAP_ALL_SESSIONS || rows.some((r) => r.session_id === restoreTarget && r.has_transcript))) {
     tapSelect.value = restoreTarget;
-    // 是这次页面加载第一次带回来的（不是用户刚选的），程序设值不会触发 change 事件，
-    // 得自己手动拉一下数据，不然下拉框显示对了但内容是空的。
+    // Restored on this first page load (not just picked by the user): setting the value from code does
+    // not fire a change event, so fetch the data by hand, or the dropdown looks right but the content is empty.
     if (!current) pollTap();
   }
   showTapPlaceholder();
 }
 
-// 还没选会话时列表是空的——给一句提示，不然整页空白像是坏了。
+// Before a session is selected the list is empty; show a hint, otherwise the blank page looks broken.
 function showTapPlaceholder() {
   const list = document.getElementById("tap-list");
   if (!tapSelect.value && list.children.length === 0) {
@@ -902,8 +915,8 @@ function renderTapEntry(entry) {
   const el = document.createElement("div");
   el.className = "tap-entry tap-kind-" + entry.kind;
   const ts = entry.ts ? fmtTime24(new Date(entry.ts)) : "";
-  // "全部会话"合并视图下每条都带 sessionId，需要标出是哪个会话的，
-  // 单会话视图（entry.sessionId 不存在）不显示这个标签。
+  // In the merged "all sessions" view every entry carries sessionId and needs a tag saying which session
+  // it belongs to; the single-session view (no entry.sessionId) shows no tag.
   const sessionTag = entry.sessionId
     ? `<span class="tap-session-tag">📁 ${escapeHtml(folderName(entry.cwd))}${entry.model ? " · " + escapeHtml(modelShort(entry.model)) : ""} · ${escapeHtml(entry.sessionId.slice(0, 8))}…</span>`
     : "";
@@ -925,8 +938,9 @@ async function pollTap() {
   const list = document.getElementById("tap-list");
 
   if (sessionId === TAP_ALL_SESSIONS) {
-    // "全部会话"合并视图：每个 session 各取最近一小段、按时间戳合并，不用增量游标
-    // （session 数量对个人工具来说通常不多，每次全量重拉比维护多文件游标简单得多）。
+    // Merged "all sessions" view: take the latest small slice of each session and merge by timestamp,
+    // without incremental cursors (for a personal tool there are usually few sessions, and a full refetch
+    // each time is much simpler than keeping cursors for many files).
     const result = await api("/api/transcript/all?limit=200&per_session_limit=30");
     if (!result) return;
     tapMeta.textContent = t("tap.allSessionsMeta", { n: result.sessionCount });
@@ -952,8 +966,8 @@ async function pollTap() {
     return;
   }
   if (result.missing) {
-    // hook payload 里报过这个路径，但文件实际不存在——常见于一次性工具调用/
-    // 后台任务这类没有落盘常规 project transcript 的执行上下文，不是卡住了。
+    // The hook payload reported this path but the file does not exist: common for one-off tool calls or
+    // background tasks that never write a regular project transcript to disk. It is not stuck.
     tapMeta.textContent = result.transcriptPath;
     tapMeta.title = result.transcriptPath;
     list.innerHTML = `<div class="empty-state">${t("tap.transcriptMissing")}</div>`;
@@ -966,9 +980,9 @@ async function pollTap() {
     return;
   }
   if (list.querySelector(".empty-state")) list.innerHTML = "";
-  // 最新的放最上面、老的往下沉——接口返回的 entries 是按时间正序（旧→新）来的，
-  // 要反过来插：本批次内部先倒序拼进 fragment，再整个塞到列表最前面，这样批次内
-  // 最新的那条会落在最上面，且跟上一批已经在顶部的更早内容衔接顺序不乱。
+  // Newest on top, older entries sink: the API returns entries in chronological order (old -> new), so
+  // insert them reversed. Within a batch, build the fragment in reverse order, then put it at the top of
+  // the list as a whole; the newest entry of the batch lands on top and stays in order with the earlier content already there.
   const frag = document.createDocumentFragment();
   for (const entry of result.entries.slice().reverse()) frag.appendChild(renderTapEntry(entry));
   list.insertBefore(frag, list.firstChild);
@@ -976,7 +990,7 @@ async function pollTap() {
   if (tapAutoscrollToggle.checked) list.scrollTop = 0;
 }
 
-// ---------- 首页概览 ----------
+// ---------- Home overview ----------
 async function refreshOverview() {
   const s = await api("/api/overview");
   if (!s) return;
@@ -984,8 +998,8 @@ async function refreshOverview() {
   document.getElementById("stat-total-sessions").textContent = s.sessionCount;
   document.getElementById("stat-total-events").textContent = s.total;
   document.getElementById("stat-blocked").textContent = s.blockedTotal;
-  // macOS 上执行层交叉验证根本没有运行（探针用 nettop，看不到 execve），这时显示 "0"
-  // 会被读成"查过了，没问题"。显示 n/a 并在 tooltip 里说明，是能力缺失不是安全结论。
+  // On macOS the exec-layer cross-check does not run at all (the probe uses nettop, which cannot see
+  // execve). Showing "0" would read as "checked, all clear". Show n/a with a tooltip: a missing capability, not a security verdict.
   const bypassEl = document.getElementById("stat-bypass");
   const bypassCard = bypassEl.closest(".strip-card");
   if (s.bypassSupported === false) {
@@ -1010,7 +1024,7 @@ async function refreshOverview() {
     document.getElementById("stat-file-deletes").textContent = s.fileOps.deletes;
   }
   if (s.installOps) {
-    // 分组名就是元素 id 后缀，后端加一组、前端加一张卡即可，不用再动这里。
+    // The group name is the element id suffix: when the backend adds a group, the front end adds a card; nothing to change here.
     for (const [key, n] of Object.entries(s.installOps)) {
       const el = document.getElementById("stat-install-" + key);
       if (el) el.textContent = n;
@@ -1030,7 +1044,7 @@ async function refreshOverview() {
   document.getElementById("stat-advanced-threat-total").textContent = s.advancedThreatTotal;
   document.getElementById("stat-workdir-escape-total").textContent = s.workdirEscapeTotal;
   if (Array.isArray(s.workdirEscapeBreakdown)) {
-    // 卡片下面的小字：读/写各多少、其中落在敏感位置（家目录隐藏文件/别的用户/系统目录）的多少
+    // Small text under the card: reads/writes each, and how many hit sensitive locations (hidden home-dir files / another user / system directories)
     const byKind = Object.fromEntries(s.workdirEscapeBreakdown.map((r) => [r.kind, r.n]));
     const n = (k) => byKind[k] || 0;
     document.getElementById("stat-workdir-escape-sub").textContent = t("home.workdirEscape.sub", {
@@ -1043,12 +1057,13 @@ async function refreshOverview() {
     document.getElementById("stat-screenshot").textContent = s.screenshotOps.total;
   }
 
-  // 日志类型是"身份"型分类，六项各一色而不是统一的强调色——原来六行全是同一个蓝，
-  // 颜色不承载任何信息。配色是 --cat-1..6（见 style.css 里那段说明，跑过可读性验证）。
-  //
-  // 两条约束：颜色按 source 这个键绑定，不按名次，所以筛选或数量变化不会让剩下的行换色；
-  // 渲染顺序用 SOURCE_ORDER 固定，因为配色的色盲分离度是按"相邻两项"验证的，顺序一变
-  // 相邻关系就变了，验证结论也就不作数了。不在表里的新 source 排在最后、用中性灰。
+  // Log type is an "identity" category, so each of the six gets its own colour rather than one accent:
+  // previously all six rows were the same blue and colour carried no information. The palette is
+  // --cat-1..6 (see the note in style.css; it passed a readability check).
+  // Two constraints: colours are bound to the source key, not to rank, so filtering or count changes do
+  // not recolour the remaining rows; render order is fixed by SOURCE_ORDER, because the palette's
+  // colour-blind separation was verified for adjacent pairs, and changing the order changes adjacency and
+  // voids that check. New sources not in the table go last, in neutral grey.
   const ordered = SOURCE_ORDER.map((key) => s.bySource.find((r) => r.source === key)).filter(Boolean);
   const rest = s.bySource.filter((r) => !SOURCE_COLOR[r.source]);
   renderBarList("source-breakdown", [...ordered, ...rest].map((r) => ({
@@ -1068,8 +1083,8 @@ async function refreshOverview() {
   })));
 }
 
-// 日志类型的固定渲染顺序 + 配色。顺序和 style.css 里 --cat-1..6 的验证顺序一一对应，
-// 改任何一边都要同时改另一边，并重跑 dataviz 的 validate_palette.js。
+// Fixed render order + palette for log types. The order matches the verified order of --cat-1..6 in
+// style.css one to one; change one side and you must change the other and rerun dataviz's validate_palette.js.
 const SOURCE_ORDER = ["hook_lifecycle", "hook_post", "hook_pre", "hook_prompt", "os_exec", "os_net"];
 const SOURCE_COLOR = {
   hook_lifecycle: "var(--cat-1)",
@@ -1083,7 +1098,7 @@ const SOURCE_COLOR = {
 function renderBarList(containerId, rows) {
   const el = document.getElementById(containerId);
   if (rows.length === 0) {
-    el.innerHTML = '<div class="empty-state">暂无数据</div>';
+    el.innerHTML = '<div class="empty-state">No data</div>';
     return;
   }
   const max = Math.max(1, ...rows.map((r) => r.count));
@@ -1100,19 +1115,21 @@ function renderBarList(containerId, rows) {
     .join("");
 }
 
-// ---------- 介入级别：三档分段控件 ----------
-// 三档互斥，做成并排的 radiogroup：三档同时可见、点哪档去哪档、任意两档一步可达，
-// 控件本身就是状态显示。旧版是"切换按钮 + 单独的停止按钮"，按钮上写的是动作不是状态，
-// 任何时刻只看得到一个选项；而且从"已关闭"出发时切换按钮指向"拦截中"，导致关闭态
-// 没法一步切到观察模式，必须先开回拦截再切一次，中间那一下是真的在拦截的。
-// 注意别再把 paused 叫成"暂停审计"——那一档审计照常在跑，停的只是拦截，所以对外叫
-// "观察模式 / permissive"（取名参考 SELinux permissive）。磁盘和接口上的值仍是 paused。
+// ---------- Intervention level: three-way segmented control ----------
+// The three levels are mutually exclusive, so they form a side-by-side radiogroup: all three visible,
+// click a level to go there, any level reachable from any other in one step, and the control itself
+// shows the state. The old version was "toggle button + separate stop button": the buttons named
+// actions, not states, and only one option was visible at a time. Also, from "Off" the toggle pointed
+// to "Enforcing", so Off could not go straight to Permissive: you had to turn enforcing back on first,
+// and in that intermediate step it really was blocking.
+// Do not call paused "audit paused" again: in that level auditing keeps running, only blocking stops,
+// so it is shown as "Permissive (observe only)" (name borrowed from SELinux permissive). The value on disk and in the API is still paused.
 const auditSeg = document.getElementById("audit-level-seg");
 const auditSegOpts = auditSeg ? Array.from(auditSeg.querySelectorAll(".seg-opt")) : [];
 function applyAuditState(state) {
   document.getElementById("audit-state-pill").className = "pill audit-state-" + state;
   document.getElementById("audit-state-text").textContent = t("auditState." + state);
-  // 首页态势摘要条第一张卡：同一个状态在顶栏 pill 和首页各显示一份
+  // First card of the Home status summary: the same state is shown in both the top-bar pill and on Home
   const stripDot = document.getElementById("strip-audit-dot");
   if (stripDot) {
     stripDot.className = "strip-dot " + state;
@@ -1120,13 +1137,13 @@ function applyAuditState(state) {
     document.getElementById("strip-audit-text").textContent = key ? t(key) : state;
   }
 
-  // 分段控件：当前档 aria-checked=true（CSS 的选中态也挂在这个属性上，样式和可访问性
-  // 用同一个事实来源，不会出现"看着选中了但读屏器说没选"）。
+  // Segmented control: the current level has aria-checked=true (the CSS selected state also hangs off
+  // this attribute, so styling and accessibility share one source of truth and can never disagree).
   for (const opt of auditSegOpts) {
     const on = opt.dataset.level === state;
     opt.setAttribute("aria-checked", on ? "true" : "false");
-    // 只有当前档从 tab 序列里可达，方向键在组内移动——这是 radiogroup 的标准交互，
-    // 免得三个段各占一次 tab。
+    // Only the current level is reachable in the tab order; arrow keys move within the group. This is the
+    // standard radiogroup interaction and avoids one tab stop per segment.
     opt.tabIndex = on ? 0 : -1;
   }
   const note = document.getElementById("audit-level-note");
@@ -1146,13 +1163,14 @@ async function setAuditState(state) {
   if (!info) return;
   applyAuditState(info.state);
 }
-// 点任意一段直接切到那一档——三档两两之间都是一步可达，包括以前到不了的
-// "已关闭 → 观察模式"。只有切到"已关闭"要二次确认：那一档会真的停掉记录，
-// 跟另外两档性质不同，误点的代价是一段时间内什么都没留下。
+// Clicking any segment switches straight to that level: every pair of levels is one step apart,
+// including "Off -> Permissive", which used to be unreachable. Only switching to "Off" asks for
+// confirmation: that level really stops recording, unlike the other two, and a misclick costs a
+// stretch of time with nothing recorded.
 async function chooseAuditLevel(level) {
   if (!level) return;
   const current = auditSegOpts.find((o) => o.getAttribute("aria-checked") === "true");
-  if (current && current.dataset.level === level) return; // 点的就是当前档，什么都不做
+  if (current && current.dataset.level === level) return; // clicked the current level; do nothing
   if (level === "stopped") {
     const ok = await confirmDialog(t("modal.stopAudit.title"), t("modal.stopAudit.body"));
     if (!ok) return;
@@ -1165,7 +1183,7 @@ if (auditSeg) {
     const opt = e.target.closest(".seg-opt");
     if (opt) chooseAuditLevel(opt.dataset.level);
   });
-  // 方向键在组内移动并直接选中，Home/End 跳到首尾——radiogroup 的常规键盘行为。
+  // Arrow keys move within the group and select directly, Home/End jump to the ends: standard radiogroup keyboard behaviour.
   auditSeg.addEventListener("keydown", (e) => {
     const keys = ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"];
     if (!keys.includes(e.key)) return;
@@ -1187,13 +1205,14 @@ if (auditSeg) {
   });
 }
 
-// ---------- 是否允许其它设备访问这个 Web UI ----------
-// 这个开关只是把意图写进一个标志位；进程实际监听的地址是启动时就定死的，标志位改了
-// 不会让 127.0.0.1 变成能被局域网连上——真要生效，管理员得显式设
-// CC_MONITOR_WEBUI_HOST=0.0.0.0 重启进程。这里用 listeningHost 字段判断当前是不是
-// "改了但还没真正生效"，提示清楚，不让人误以为点一下开关就已经暴露到网络上了
-// （或者反过来，以为关掉开关就真的把端口锁回本机了——端口有没有对外开放看的是
-// 启动参数，不是这个标志位）。
+// ---------- Whether other devices may access this Web UI ----------
+// This toggle only records the intent in a flag. The address the process listens on is fixed at
+// startup, so changing the flag does not make 127.0.0.1 reachable from the LAN; to take effect, the
+// admin must explicitly set CC_MONITOR_WEBUI_HOST=0.0.0.0 and restart the process. The listeningHost
+// field tells us whether the change is "made but not yet in effect", and we say so clearly, so nobody
+// thinks one click has already exposed the UI to the network (or, the other way round, that turning
+// the toggle off has locked the port back to localhost: whether the port is open depends on the
+// startup arguments, not on this flag).
 const remoteAccessToggle = document.getElementById("remote-access-toggle");
 const remoteAccessNote = document.getElementById("remote-access-note");
 function applyRemoteAccessState(info) {
@@ -1231,7 +1250,7 @@ remoteAccessToggle.addEventListener("change", async () => {
   applyRemoteAccessState(info);
 });
 
-// ---------- 数据管理：持久化归档 / 清空当前数据 / 历史数据记录列表 ----------
+// ---------- Data management: persistent archive / clear current data / History list ----------
 const archiveModal = document.getElementById("archive-modal");
 const archiveLabelInput = document.getElementById("archive-label");
 
@@ -1253,8 +1272,8 @@ async function confirmArchive() {
     body: JSON.stringify({ label: label || undefined }),
   });
   if (!result) return;
-  // 归档不清空当前数据，只是多存一份快照——切到"历史数据"页让用户直接看到刚存的这条,
-  // 比留在首页看不出任何变化更有反馈感。
+  // Archiving does not clear the current data, it just stores an extra snapshot. Switching to the
+  // History page shows the user the entry just saved, which is better feedback than staying on Home where nothing visibly changes.
   document.querySelector('.tab-btn[data-tab="archives"]').click();
   refreshArchivesList();
 }
@@ -1268,8 +1287,9 @@ document.getElementById("clear-data-btn").addEventListener("click", async () => 
   if (!ok) return;
   const result = await api("/api/events/clear", { method: "POST" });
   if (!result) return;
-  // 跟切换语言时一样：已经拼进 DOM 里的日志/Tap 条目不是"状态"，不会自动清空，
-  // 数据没了但界面还留着旧条目会很奇怪，干脆重置增量游标、清空列表再整体刷新一遍。
+  // Same as on a language switch: log/Tap entries already in the DOM are not "state" and do not clear
+  // themselves. Old entries lingering after the data is gone would be odd, so reset the incremental
+  // cursors, clear the lists and refresh everything.
   lastLogId = 0;
   document.getElementById("log-list-full").innerHTML = "";
   tapNextLine = 0;
@@ -1340,20 +1360,23 @@ async function refreshArchivesList() {
   });
 }
 
-// ---------- AI 审批台：action=confirm 的操作，触发它的终端能直接按 y/N，这里也能点 ----------
-// 这几个请求都是"卡着等结果"的（hook 进程还在阻塞、Claude Code 那次工具调用还没继续），
-// 不是普通审计记录，等的时间越长对方越难受，轮询间隔比其它列表都短。
+// ---------- AI Approvals: action=confirm operations; the terminal that triggered one can answer y/N, and so can this page ----------
+// These requests are all "blocked waiting for an answer" (the hook process is still blocking, Claude
+// Code's tool call has not continued yet). They are not ordinary audit records; the longer they wait
+// the worse for the other side, so the poll interval is shorter than for every other list.
 
-// 浏览器系统通知：这个页面不在前台（切了标签页、缩小了窗口，甚至整个浏览器都在后台）
-// 时，光靠页面里刷新列表没用，人根本看不到。用 Notification API 弹一条系统级通知，
-// 点一下能直接跳回来处理。同一条请求只弹一次，不然每 2 秒轮询一次会把人烦死。
+// Browser system notifications: when this page is not in front (another tab, minimised window, or the
+// whole browser in the background), refreshing the list in the page is useless because nobody sees it.
+// Use the Notification API for a system-level notification; one click jumps back here. Notify once per
+// request, otherwise a poll every 2 seconds would drive people mad.
 const notifiedApprovalIds = new Set();
 const APPROVALS_NOTIFY_PREF_KEY = "cc-monitor-approvals-notify-enabled";
 
-// 套在 Electron 桌面版里时，这条浏览器 Notification API 的路不能用：Electron 渲染进程里
-// Notification.permission 永远是 "granted"，new Notification() 也不报错，但 macOS 上未正式
-// 签名的 app 会被系统静默拒绝（详见 electron-main.js 顶部那段说明）。桌面版由主进程自己
-// 轮询待批准列表来提醒（系统通知 + Dock 跳动 + 角标），这里整条关掉，免得两边重复。
+// Inside the Electron desktop app this browser Notification API path cannot be used: in the Electron
+// renderer Notification.permission is always "granted" and new Notification() does not throw, but on
+// macOS an app without proper signing is silently rejected by the system (see the note at the top of
+// electron-main.js). The desktop app's main process polls the pending approval list itself (system
+// notification + Dock bounce + badge), so this whole path is switched off to avoid duplicates.
 const IS_ELECTRON = /\bElectron\//.test(navigator.userAgent);
 
 function approvalsNotifySupported() {
@@ -1391,7 +1414,7 @@ document.getElementById("approvals-notify-btn").addEventListener("click", async 
   try {
     localStorage.setItem(APPROVALS_NOTIFY_PREF_KEY, perm === "granted" ? "1" : "0");
   } catch (e) {
-    // localStorage 不可用不影响这次授权本身，只是刷新后按钮状态可能得重新点一下
+    // localStorage unavailable does not affect this permission grant; after reload the button state may just need another click
   }
   syncApprovalsNotifyBtn();
 });
@@ -1423,18 +1446,18 @@ function notifyNewApprovals(rows) {
       n.close();
     };
   }
-  // 已经处理掉的请求（同意/拒绝/过期）不会再出现在下一次轮询结果里，没必要一直占着
-  // 这个 Set——按当前这批的 id 反过来清一遍，防止长时间挂着页面导致 Set 无限变大。
+  // Requests already handled (approved/denied/expired) do not appear in the next poll, so there is no
+  // point keeping them in this Set. Prune it by the ids in the current batch so a page left open for a long time does not grow the Set forever.
   const stillPending = new Set(rows.map((r) => r.id));
   for (const id of notifiedApprovalIds) {
     if (!stillPending.has(id)) notifiedApprovalIds.delete(id);
   }
 }
 
-// kind='notify' 的记录（比如 AskUserQuestion）matched_value 存的是 questions 字段
-// 原样 JSON.stringify 之后的样子（一个数组，每个元素有 question/header/options）——
-// 解析出来排版成"问题 + 选项列表"，解析失败（万一以后 tools 字段形状变了）就照原样
-// 转义显示，不让页面直接崩掉。
+// For kind='notify' records (e.g. AskUserQuestion) matched_value holds the questions field exactly as
+// JSON.stringify produced it (an array; each element has question/header/options). Parse it and lay it
+// out as "question + option list"; if parsing fails (should the tool's field shape change one day),
+// show it escaped as-is rather than crash the page.
 function formatQuestionValue(matchedValue) {
   try {
     const questions = JSON.parse(matchedValue);
@@ -1450,8 +1473,9 @@ function formatQuestionValue(matchedValue) {
   }
 }
 
-// 规则元信息（id -> title/desc 中英文）：审批台把"命中了哪条规则"翻译成"要确认的是什么
-// 操作"。启动时拉一次、之后跟审批列表一起刷新（用户改了 rules.json 里的文案也能跟上）。
+// Rule metadata (id -> title/desc in Chinese and English): AI Approvals turns "which rule matched" into
+// "what operation needs confirming". Fetched once at startup, then refreshed with the approval list
+// (so edits to the text in rules.json show up too).
 let ruleMetaCache = {};
 async function refreshRuleMeta() {
   const meta = await api("/api/rules/meta");
@@ -1474,7 +1498,7 @@ async function refreshApprovals() {
   if (!rows) return;
   badge.hidden = rows.length === 0;
   badge.textContent = String(rows.length);
-  // 首页态势摘要条的"待审批"卡跟顶栏徽章同源
+  // The "pending approval" card in the Home status summary shares its source with the top-bar badge
   const stripPending = document.getElementById("strip-pending");
   if (stripPending) {
     stripPending.textContent = String(rows.length);
@@ -1491,13 +1515,15 @@ async function refreshApprovals() {
   list.innerHTML = rows
     .map((r) => {
       const isNotify = r.kind === "notify";
-      // kind='permission'：Claude Code 自己要弹的原生确认框（PermissionRequest hook），
-      // matched_rule 存的是 "permission:<工具名>" 这种记忆用的 key，不是规则表里的 id，
-      // 展示成通俗说明；按钮跟 confirm 一样，选了就通过 decision.behavior 替用户答掉。
+      // kind='permission': Claude Code's own native confirmation prompt (PermissionRequest hook).
+      // matched_rule holds a "permission:<tool name>" key used for remembering, not a rule id from the rule
+      // table, so show a plain explanation instead; the buttons work like confirm, and the choice answers on
+      // the user's behalf via decision.behavior.
       const isPermission = r.kind === "permission";
-      // 标题一句话说"要确认的是什么操作"，副标题解释为什么要确认；规则 id 和工具名退到最后
-      // 一行小字。三种来源：命中规则的取规则的 title/desc；Claude Code 原生权限确认没有规则，
-      // 按工具名给一句；用户自定义规则没写 title 就退回 id。
+      // The title says in one sentence "what operation needs confirming", the subtitle explains why; the rule
+      // id and tool name drop to a last line of small text. Three sources: a matched rule uses the rule's
+      // title/desc; Claude Code's native permission prompt has no rule, so we give one sentence per tool name;
+      // a user-defined rule without a title falls back to its id.
       let headline;
       let explain;
       if (isPermission) {
@@ -1594,11 +1620,12 @@ function approvalViaLabel(via) {
   return key ? t(key) : via || "-";
 }
 
-// 历史记录（status != 'pending' 的全部记录，长期保存，见 approvals.js 的 listHistory()）——
-// 跟上面"待批准"列表不一样，这里不需要频繁轮询，只在真正切到这个 tab 时刷新一次。
-// resolved_value 是 notify 类记录（比如 AskUserQuestion）在终端里被回答之后，hook.py
-// 从对应 PostToolUse 的 tool_response.answers 里摘出来存的——{问题文本: 回答文本} 的
-// JSON，这里只取回答文本本身（问题已经在"匹配内容"那一列显示过了，不用重复）。
+// History (every record with status != 'pending', kept long term; see listHistory() in approvals.js).
+// Unlike the "pending approval" list above, this needs no frequent polling; it refreshes only when the
+// tab is actually opened. resolved_value is what hook.py extracts for notify records (e.g.
+// AskUserQuestion) after they are answered in the terminal, from the matching PostToolUse
+// tool_response.answers: JSON of {question text: answer text}. Only the answer text is shown here (the
+// question is already in the "matched content" column, no need to repeat it).
 function formatAnswerValue(resolvedValue) {
   if (!resolvedValue) return null;
   try {
@@ -1608,7 +1635,7 @@ function formatAnswerValue(resolvedValue) {
       if (vals.length) return vals.join("; ");
     }
   } catch (e) {
-    // 不是预期的 JSON 格式，原样显示
+    // Not the expected JSON shape; show as-is
   }
   return resolvedValue;
 }
@@ -1652,8 +1679,8 @@ async function refreshApprovalHistory() {
       </tbody>
     </table>`;
 }
-// 内容部分直接复用跟"Log 审计"页一样的 renderLogItem() 渲染，看着是一致的。
-// 归档是固定不变的快照，不用轮询，事件多的话点"加载更多"往后翻页就行。
+// The content reuses the same renderLogItem() as the Audit Log page, so it looks consistent.
+// An archive is a fixed snapshot, so no polling; with many events, "Load more" pages further.
 let archiveViewerNextId = 0;
 let archiveViewerArchiveId = null;
 async function loadMoreArchiveEvents(list, loadMoreBtn) {
@@ -1691,24 +1718,26 @@ async function openArchiveViewer(id, label) {
   if (list.children.length === 0) list.innerHTML = `<div class="empty-state">${t("archives.viewerEmpty")}</div>`;
 }
 
-// ---------- 首页统计卡片下钻详情 ----------
+// ---------- Drill-down details for Home stat cards ----------
 const drilldownModal = document.getElementById("drilldown-modal");
 document.getElementById("drilldown-close").addEventListener("click", () => (drilldownModal.hidden = true));
 drilldownModal.addEventListener("click", (ev) => {
   if (ev.target === drilldownModal) drilldownModal.hidden = true;
 });
 
-// 网络流量表格里的"连接次数"点开看这个目标地址的每次连接时间/进程明细，以及网络流量
-// 页顶部汇总卡片（总连接次数/不同 IP 数）点开看完整明细——这些元素都是轮询重建
-// innerHTML 生成的，事件委托绑在 document 上一次性搞定，不用每次刷新完都重新挂监听器。
+// In the network traffic table, clicking "connections" shows each connection time/process for that
+// destination, and the summary cards at the top of the Network page (total connections / distinct IPs)
+// open the full details. These elements are all rebuilt via innerHTML on every poll, so one delegated
+// listener on document handles them, instead of re-attaching listeners after each refresh.
 document.addEventListener("click", (ev) => {
   const targetEl = ev.target.closest("[data-target-ip]");
   if (targetEl) {
     showTargetConnections(targetEl.dataset.targetIp, targetEl.dataset.targetPort, targetEl.dataset.targetHost);
     return;
   }
-  // 首页紧凑布局里，一张卡内可能嵌着更小的可点区域（合并卡里的三个数字、文件操作盒子
-  // 里的四个小统计、摘要卡说明行里的"终端会话"），closest 取最近的那个，内层优先。
+  // In the compact Home layout a card may contain smaller clickable areas (the three numbers in a merged
+  // card, the four small stats in the file-operation box, "terminal sessions" in a summary card's caption);
+  // closest picks the nearest one, so the inner one wins.
   const drilldownEl = ev.target.closest(".clickable[data-drilldown]");
   if (drilldownEl) {
     openDrilldown(drilldownEl.dataset.drilldown);
@@ -1752,14 +1781,16 @@ async function showTargetConnections(ip, port, host) {
     </table>`;
 }
 
-// 下钻接口请求失败（比如 Web UI 服务还是旧代码、没有这条新路由，返回 404）时，各分支
-// 里的 `if (!result) return;` 会直接退出，弹窗就一直停在"加载中…"——统一在这层兜底：
-// 跑完之后占位符还在，就换成一句说明，告诉用户该怎么办。
+// When a drill-down request fails (e.g. the Web UI server still runs old code without this route and
+// returns 404), each branch's `if (!result) return;` exits early and the dialog stays on "Loading…"
+// forever. Catch it here in one place: if the placeholder is still there afterwards, replace it with a
+// sentence telling the user what to do.
 async function openDrilldown(kind) {
   const body = document.getElementById("drilldown-body");
   try {
-    // 好几个下钻要把规则 id 显示成通俗说明（拦截统计、审批历史）。规则文案平时是跟着
-    // 审批台一起刷的，首屏可能还没拉到——这里按需补一次（服务端有 5s 缓存，很便宜）。
+    // Several drill-downs show rule ids as plain explanations (block stats, approval history). The rule
+    // text is normally refreshed along with AI Approvals and may not be loaded on first paint, so fetch it
+    // on demand here (the server caches it for 5 s; cheap).
     if (Object.keys(ruleMetaCache).length === 0) await refreshRuleMeta();
     await openDrilldownInner(kind);
   } finally {
@@ -1920,7 +1951,7 @@ async function openDrilldownInner(kind) {
     title.textContent = t("drilldown.eventTypes.title");
     const [rows, sessionRows] = await Promise.all([api("/api/drilldown/event-types"), api("/api/drilldown/sessions")]);
     if (!rows) return;
-    // Session ID 一串十六进制没法识别是哪个会话，跟别处一样补上文件夹名 + 模型。
+    // A hex Session ID cannot identify the session; as elsewhere, add the folder name + model.
     const sessionInfo = new Map((sessionRows || []).map((r) => [r.sessionId, r]));
     const describeSession = (sessionId) => {
       const info = sessionInfo.get(sessionId);
@@ -2036,16 +2067,18 @@ async function openDrilldownInner(kind) {
     "advanced-threat": { titleKey: "home.advancedThreat.title", labels: { cryptoMining: "home.advancedThreat.cryptoMining", dbFileWrite: "home.advancedThreat.dbFileWrite", webshell: "home.advancedThreat.webshell", reverseEscapeShell: "home.advancedThreat.reverseEscapeShell", downloadExec: "home.advancedThreat.downloadExec", c2Framework: "home.advancedThreat.c2Framework", postExploitation: "home.advancedThreat.postExploitation", suspiciousMcp: "home.advancedThreat.suspiciousMcp", pentestRecon: "home.advancedThreat.pentestRecon", covertTunnel: "home.advancedThreat.covertTunnel" } },
     "workdir-escape": { titleKey: "home.workdirEscape.title", labels: { writeSensitive: "home.workdirEscape.writeSensitive", writeOther: "home.workdirEscape.writeOther", readSensitive: "home.workdirEscape.readSensitive", readOther: "home.workdirEscape.readOther" } },
   };
-  // 首页卡片用 accent-red-strong 标红的那几组，下钻详情里的分类徽章也跟着标红加粗。
-  // 一开始只标红"敏感操作/敏感数据/高级威胁检测/逆向分析工具调用"这几组，后来陆续被
-  // 要求把 GitHub/SSH/下载/Docker/压缩归档/网络诊断/进程管理这些"命令类操作统计"
-  // 分组下钻详情里的分类标签也统一标红加粗——干脆对所有走 GROUPED_OPS_KINDS 这条
-  // 下钻路径的分组都生效，不用每加一组就来改一次这个集合。
+  // The groups whose Home cards are marked with accent-red-strong also get red bold category badges in
+  // the drill-down details. At first only "sensitive operations / sensitive data / advanced threat
+  // detection / reverse-engineering tool calls" were marked; later the "command operation stats"
+  // (GitHub/SSH/download/Docker/archive/network diagnostics/process management) were also asked to have
+  // red bold category labels in their grouped drill-downs. So this simply applies to every group going
+  // through the GROUPED_OPS_KINDS drill-down path, instead of editing this set for each new group.
   if (GROUPED_OPS_KINDS[kind]) {
-    // GitHub/SSH/下载/Docker/压缩/网络诊断/进程管理这七组——首页原来每组一整排
-    // 细分类卡片（合计 30+ 张，刷屏），现在每组只放一张汇总卡片，点开先看分类
-    // 小计表（跟 MCP/Skill/子代理调用同一个表格），再往下是完整命令明细列表
-    // （复用 log-item 那套带语法高亮的 summaryHtml 渲染，每条前面挂一个分类徽章）。
+    // The seven groups GitHub/SSH/download/Docker/archive/network diagnostics/process management: Home
+    // used to show a full row of sub-category cards per group (30+ cards in total, flooding the page).
+    // Now each group has one summary card; opening it shows a category subtotal table first (the same
+    // table as MCP/Skill/subagent calls), then the full command list below (reusing the log-item
+    // summaryHtml rendering with syntax highlighting, each entry prefixed by a category badge).
     const cfg = GROUPED_OPS_KINDS[kind];
     title.textContent = t(cfg.titleKey);
     const result = await api(`/api/drilldown/${kind}`);
@@ -2056,8 +2089,9 @@ async function openDrilldownInner(kind) {
       return;
     }
     const kindLabel = (k) => (cfg.labels[k] ? t(cfg.labels[k]) : k);
-    // 首页卡片标红的那几组（敏感操作/敏感数据/高级威胁检测/逆向分析工具调用），下钻
-    // 详情里的分类徽章也跟着标红加粗，跟卡片本身的视觉分量对上，不是所有分组都要。
+    // For the groups whose Home cards are red (sensitive operations / sensitive data / advanced threat
+    // detection / reverse-engineering tool calls), the category badges in the drill-down are red and bold
+    // too, matching the card's visual weight; not every group needs it.
     const badgeCls = "dd-badge-category dd-badge-danger";
     const tdCls = " class=\"dd-badge-danger\"";
     body.innerHTML = `
@@ -2162,8 +2196,8 @@ async function openDrilldownInner(kind) {
       body.innerHTML = `<div class="empty-state">${t("drilldown.blocked.empty")}</div>`;
       return;
     }
-    // 明细列表之前先给一组统计：光是一长串事件很难看出"到底主要在拦什么"。
-    // 三个维度都从已经拿到的 rows 里现算，不用再打接口。
+    // Give a set of statistics before the detail list: a long list of events alone does not show "what is
+    // mostly being blocked". All three dimensions are computed from the rows we already have; no extra API call.
     const countBy = (keyFn) => {
       const m = new Map();
       for (const r of rows) {
@@ -2222,8 +2256,8 @@ async function openDrilldownInner(kind) {
   }
 
   if (kind === "screenshot") {
-    // 只有一张卡片、不分子类型，跟上面那组"file-op-/install-op-/github-op-"的
-    // 共用逻辑不一样——单独处理，直接调 /api/drilldown/screenshot，不用拼 opType。
+    // Only one card, no subtypes, unlike the shared "file-op-/install-op-/github-op-" logic above: handled
+    // separately, calling /api/drilldown/screenshot directly without building an opType.
     title.textContent = t("home.screenshotOps.total") + " — " + t("drilldown.fileOp.suffix");
     const result = await api("/api/drilldown/screenshot");
     if (!result) return;
@@ -2232,8 +2266,8 @@ async function openDrilldownInner(kind) {
       body.innerHTML = `<div class="empty-state">${t("drilldown.empty")}</div>`;
       return;
     }
-    // "真的截了屏"和"只是打开了一张图片"必须分开看：这张卡里绝大多数其实是后者，
-    // 混成一个数字的时候，截图命令有没有被检测到完全看不出来。
+    // "Really took a screenshot" and "just opened an image" must be shown separately: most entries in this
+    // card are the latter, and with one combined number you cannot tell whether screenshot commands were detected at all.
     const shotKindLabel = (k) => t("drilldown.screenshot.kind." + k) || k;
     const bd = result.breakdown || [];
     const realShots = bd.filter((r) => r.kind !== "imageRead").reduce((a, r) => a + r.n, 0);
@@ -2268,9 +2302,9 @@ async function openDrilldownInner(kind) {
   }
 
   if (kind === "todo-calls") {
-    // 单张卡片，不分子类型，跟截屏审计那张一个套路——TodoWrite 没有天然的分类
-    // 维度，直接平铺列出最近的调用，每条带上任务列表的条数（不展示任务的具体
-    // 文字内容，跟其它下钻卡片"只给基本信息"是同一个尺度）。
+    // Single card, no subtypes, same pattern as the screenshot audit card. TodoWrite has no natural
+    // category dimension, so list the recent calls flat, each with the number of items in its task list
+    // (not the task text itself, the same "basic information only" level as the other drill-down cards).
     title.textContent = t("home.card.todoCalls") + " — " + t("drilldown.fileOp.suffix");
     const rows = await api("/api/drilldown/todo-calls");
     if (!rows) return;
@@ -2295,12 +2329,12 @@ async function openDrilldownInner(kind) {
 
   const OP_DRILLDOWN_PREFIXES = ["file-op-", "install-op-"];
   if (OP_DRILLDOWN_PREFIXES.some((p) => kind.startsWith(p))) {
-    // 文件操作（读/写/编辑/删除）、软件安装（pip/系统包/npm/其它）这两组下钻详情
-    // 数据形状、渲染方式完全一样，就是后端接口路径前缀不同，合并成一份处理逻辑。
-    // GitHub/SSH/下载/Docker/压缩/网络诊断/进程管理这七组以前也在这个大家族里，
-    // 首页改成每组一张汇总卡片之后，挪到下面 GROUPED_OPS_KINDS 那个专门的分支了
-    // （那七组下钻现在是"分类小计表 + 事件明细"，跟 file-op/install-op 这种平铺
-    // 列表已经不是同一种形状）。
+    // File operations (read/write/edit/delete) and software installs (pip/system packages/npm/other)
+    // have identical drill-down data shapes and rendering, only the backend API path prefix differs, so
+    // they share one code path. GitHub/SSH/download/Docker/archive/network diagnostics/process management
+    // used to be part of this family too; since Home moved to one summary card per group they live in the
+    // dedicated GROUPED_OPS_KINDS branch below (those seven drill-downs are now "category subtotal table +
+    // event details", no longer the same shape as the flat file-op/install-op lists).
     const OP_LABEL_KEYS = {
       "install-op": { pip: "home.installOps.pip", uv: "home.installOps.uv", pythonOther: "home.installOps.pythonOther", js: "home.installOps.js", toolchain: "home.installOps.toolchain", system: "home.installOps.system", other: "home.installOps.other" },
       "file-op": { read: "home.fileOps.reads", write: "home.fileOps.writes", edit: "home.fileOps.edits", delete: "home.fileOps.deletes" },
@@ -2333,10 +2367,10 @@ async function openDrilldownInner(kind) {
         .join("");
 
     if (apiKind === "install-op" && opType === "npm") {
-      // "npm 安装"这张卡片背后是两条不同风险等级的规则（本地 log 级、全局 confirm
-      // 级），合并成一个总数好过一眼看出"到底装了多少次 npm 包"，但点开详情不能把
-      // 两种混在一起平铺——按 matchedRule 分成两组，各自一个小标题，风险等级不同的
-      // 东西不该看起来一样重。
+      // The "npm install" card is backed by two rules with different risk levels (local install at log
+      // level, global install at confirm level). One combined total is better for seeing at a glance "how
+      // many npm installs happened", but the details must not mix both into one flat list: group by
+      // matchedRule, each with its own subheading, since things with different risk levels should not look equally weighty.
       const local = rows.filter((r) => r.matchedRule === "npm_local_install");
       const global = rows.filter((r) => r.matchedRule === "npm_global_install");
       body.innerHTML = `
@@ -2353,9 +2387,9 @@ async function openDrilldownInner(kind) {
   }
 }
 
-// ---------- 状态信息页（类 ccstatusline） ----------
-// 跟 ccstatusline 的 TokensTotal/TokensCached 挂件同一个格式（"2.6M"/"30.6k"），
-// 数字本身也是同一个口径：Total = input+output+cached，Cached = cache_read+cache_creation。
+// ---------- Status page (ccstatusline-like) ----------
+// Same format as ccstatusline's TokensTotal/TokensCached widgets ("2.6M"/"30.6k"), and the numbers use
+// the same definition: Total = input+output+cached, Cached = cache_read+cache_creation.
 function formatTokensShort(n) {
   if (n === null || n === undefined) return null;
   if (n >= 1e6) return (n / 1e6).toFixed(1) + "M";
@@ -2451,9 +2485,9 @@ async function refreshStatusBoard() {
         ${rate ? `<span class="seg">⚡ ${rate}${rateIn ? " · " + rateIn : ""}</span>` : ""}
       `;
       if (ts.contextTokens != null) {
-        // Claude Code 不会把当前模型准确的上下文窗口大小告诉我们的 hooks（只有它自己
-        // 的 statusLine 输入才带这个字段），跟 ccstatusline 拿不到时一样退化成按 200K
-        // 标准上下文窗口估算——这是个近似值，不是精确读数，UI 文案要说清楚。
+        // Claude Code does not tell our hooks the current model's exact context window size (only its own
+        // statusLine input has that field). Like ccstatusline when the value is missing, fall back to the
+        // standard 200K context window: an approximation, not an exact reading, and the UI text must say so.
         const ctxPct = Math.min(100, Math.round((ts.contextTokens / DEFAULT_CONTEXT_WINDOW) * 100));
         const ctxColor = healthColor(100 - ctxPct);
         contextSeg = `<span class="seg" style="color:${ctxColor};" title="${t("status.contextWindow.hint")}">📐 ${t("status.contextWindow.label")}: ${ctxPct}% (${formatTokensShort(ts.contextTokens)}/200k)</span>`;
@@ -2487,9 +2521,9 @@ function fmtResetAt(iso) {
   if (!iso) return "";
   try {
     const d = new Date(iso);
-    // 之前这里用 Math.round(hours) 只精确到小时，"4.98 小时后"和"4.02 小时后"
-    // 显示出来都是"5 小时后"，差了快一小时看不出来——重置时间这种东西差几分钟
-    // 就可能是"还没刷新"和"已经刷新"的区别，改成精确到分钟。
+    // This used Math.round(hours), accurate only to the hour: "in 4.98 hours" and "in 4.02 hours" both
+    // showed "in 5 hours", nearly an hour apart without any visible difference. For a reset time a few
+    // minutes can be the difference between "not reset yet" and "already reset", so show minutes.
     const totalMinutes = Math.max(0, Math.round((d.getTime() - Date.now()) / 60000));
     const days = Math.floor(totalMinutes / 1440);
     const hours = Math.floor((totalMinutes % 1440) / 60);
@@ -2501,43 +2535,45 @@ function fmtResetAt(iso) {
   }
 }
 
-// 5 小时/7 天是接口本身文案里写的窗口长度（"单次额度 (5 小时窗口)"/"周额度"），
-// 不是猜的——沙漏要知道"这个窗口总共多长"才能算出"已经过去多少"。
+// 5 hours / 7 days are the window lengths written in the API's own text ("session quota (5-hour
+// window)" / "weekly quota"), not guesses: the hourglass needs the total window length to work out how much has elapsed.
 const SESSION_WINDOW_MS = 5 * 3600 * 1000;
 const WEEKLY_WINDOW_MS = 7 * 24 * 3600 * 1000;
-// Claude Code 不会把当前模型准确的上下文窗口大小告诉我们的 hooks（这个信息只在它
-// 自己的 statusLine 输入里才有），跟 ccstatusline 拿不到时一样退化成这个标准值
-// （多数模型的标准上下文窗口），是个近似值。
+// Claude Code does not tell our hooks the current model's exact context window size (that is only
+// in its own statusLine input). Like ccstatusline when it is missing, fall back to this standard value
+// (the standard context window of most models); it is an approximation.
 const DEFAULT_CONTEXT_WINDOW = 200000;
 
 let hourglassUidCounter = 0;
-// 沙漏：上格剩余沙子 = 1-elapsed，下格已落下的沙子 = elapsed。纯 SVG 画的，不需要图片
-// 素材，颜色跟主题的 --accent 联动（渐变的两个 stop 在 CSS 里用 color-mix 从 --accent
-// 算出来，换主题自动跟着走）。
+// Hourglass: sand left in the top bulb = 1-elapsed, sand fallen into the bottom bulb = elapsed. Pure
+// SVG, no image assets; the colour follows the theme's --accent (the gradient's two stops are derived
+// from --accent with color-mix in CSS, so a theme change carries over automatically).
 //
-// 几何：viewBox 28×44，上下各一块托板，中间是经典的沙漏轮廓，两格在 y=21.8 收口。
-// 上格的沙子贴着格底（沙子是从颈口漏下去的，所以剩下的堆在下面，液面是平的）；
-// 下格的沙子从底部堆起来，用一条二次贝塞尔把顶面拉成中间高的沙堆，比平顶的矩形
-// 像真沙子。两格都再 clip 一次，保证任何比例下都不会溢出玻璃轮廓。
-// color 传进来的话，沙子就跟着卡片自己的配色走（额度卡的颜色是按健康度算的，绿/黄/橙
-// 各不相同），不传就退回主题的 --accent。同一张卡里沙漏跟进度条同色，比一律用强调色整体。
+// Geometry: viewBox 28x44, a plate at top and bottom, the classic hourglass outline in between, the
+// bulbs meeting at y=21.8. Sand in the top bulb rests on the bulb's floor (it drains through the neck,
+// so what is left sits at the bottom with a flat surface); sand in the bottom bulb piles up from the
+// base, its top drawn as a quadratic Bezier peaking in the middle, which looks more like real sand
+// than a flat rectangle. Both are clipped again so no ratio can spill outside the glass outline.
+// If color is passed in, the sand follows the card's own colour (quota card colours are computed from
+// health: green/yellow/orange differ); otherwise it falls back to the theme's --accent. Within one
+// card the hourglass and the progress bar share a colour, which looks more unified than always using the accent.
 function hourglassSvg(elapsedFraction, color) {
   const e = Math.max(0, Math.min(1, elapsedFraction));
   const uid = `hg${hourglassUidCounter++}`;
-  const NECK = 21.8;          // 两格收口处的 y
-  const TOP_Y = 6.2;          // 上格顶
-  const BOT_Y = 37.8;         // 下格底
-  const TOP_H = NECK - TOP_Y; // 上格可容纳的沙高
+  const NECK = 21.8;          // y where the bulbs meet
+  const TOP_Y = 6.2;          // top of the upper bulb
+  const BOT_Y = 37.8;         // bottom of the lower bulb
+  const TOP_H = NECK - TOP_Y; // sand height the upper bulb can hold
   const BOT_H = BOT_Y - NECK;
 
   const topH = (1 - e) * TOP_H;
   const botH = e * BOT_H;
   const topSandY = NECK - topH;
   const botSandY = BOT_Y - botH;
-  // 沙堆顶面的隆起高度：沙子越多堆得越尖，但封顶 2.6，免得快满时戳破玻璃。
+  // Height of the sand pile's crown: more sand makes a sharper pile, capped at 2.6 so it never pokes through the glass when nearly full.
   const mound = Math.min(3.4, botH * 0.55);
 
-  // 正在漏的时候才画那道落沙；漏完了或还没开始都不画。
+  // Draw the falling stream only while sand is running; not when it is done or has not started.
   const streaming = e > 0.02 && e < 0.995;
   const sandLight = color ? rgbToHex(lerpRgb(hexToRgb(color), [255, 255, 255], 0.45)) : null;
 
@@ -2582,9 +2618,10 @@ function themeVarHex(name, fallback) {
   const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   return v || fallback;
 }
-// 健康度渐变——0=最危险（红）100=最健康（绿），中间过一道黄，两段线性插值。三个
-// 锚点直接读当前主题的 --red/--yellow/--green，不是写死的固定色，换主题这套渐变
-// 跟着联动（跟之前"整卡片染色"那次的反馈保持一致：颜色跟主题走，不要写死）。
+// Health gradient: 0 = most dangerous (red), 100 = healthiest (green), passing through yellow, two
+// linear segments. The three anchors read the current theme's --red/--yellow/--green rather than fixed
+// colours, so the gradient follows a theme change (consistent with the earlier "whole-card tint"
+// feedback: colours follow the theme, never hard-coded).
 function healthColor(healthPct) {
   const p = Math.max(0, Math.min(100, healthPct));
   const red = hexToRgb(themeVarHex("--red", "#ff5f6d"));
@@ -2597,13 +2634,13 @@ function withAlpha(hex, alpha) {
   return hex + Math.round(Math.max(0, Math.min(1, alpha)) * 255).toString(16).padStart(2, "0");
 }
 
-// conky 风格的分段配色——不是连续渐变，是固定色阶，每 10% 一档，5% 以下和
-// 85% 以上单独加两档（更红/更绿），色值本身写死、够鲜艳，不跟主题变量走
-// （这是专门给"单次额度剩余百分比"这一个进度条用的，跟别的额度条用的连续
-// 渐变 healthColor() 是两套独立的配色逻辑，按需求只用在这一个地方）。
+// conky-style banded colours: not a continuous gradient but fixed steps, one per 10%, with two extra
+// bands below 5% and above 85% (redder/greener). The colour values are hard-coded and vivid, not theme
+// variables (this is only for the "session quota remaining percentage" bar; the other quota bars use the
+// continuous healthColor() gradient, a separate colour logic; per the requirement it is used only here).
 const CONKY_STEPS = [
-  [5, "#d90000"], // <5%：很红
-  [10, "#ff4d3d"], // ~10%：微红
+  [5, "#d90000"], // <5%: very red
+  [10, "#ff4d3d"], // ~10%: slightly red
   [20, "#ff7a3d"],
   [30, "#ff9f3d"],
   [40, "#ffc93d"],
@@ -2611,7 +2648,7 @@ const CONKY_STEPS = [
   [60, "#c3e64a"],
   [70, "#8fdb4a"],
   [85, "#4fd15f"],
-  [100, "#00e05a"], // 85-100%：很绿
+  [100, "#00e05a"], // 85-100%: very green
 ];
 function conkyStepColor(pct) {
   const p = Math.max(0, Math.min(100, pct));
@@ -2621,21 +2658,23 @@ function conkyStepColor(pct) {
   return CONKY_STEPS[CONKY_STEPS.length - 1][1];
 }
 
-// 额度进度条的配色方案：原本是写死的两套——"剩余"用 conky 分段色阶、"已用"用连续
-// 渐变。有人更喜欢一眼分档的红黄绿，也有人不想让进度条抢视线（单色）。做成一个可选
-// 项存在本浏览器里，纯展示，不影响任何数据。
+// Colour scheme for the quota bars: originally two hard-coded schemes, "remaining" with conky bands
+// and "used" with a continuous gradient. Some people prefer red/yellow/green steps at a glance, others
+// do not want the bars to draw the eye (single colour). So it is an option stored in this browser:
+// display only, no effect on any data.
 const USAGE_SCHEME_KEY = "cc_monitor_usage_scheme";
 
-// 配色方案 = 一组锚点颜色，按"健康度"（0=最危险 100=最健康）在锚点之间插值。
-// 原来那几个方案全是红黄绿一个色系，看着差不多；这里补上蓝青/紫粉/日落/森林/灰度/
-// 光谱这些真正不同色系的，换一个能明显看出来。锚点从左到右 = 从最危险到最健康。
+// A colour scheme = a set of anchor colours, interpolated by "health" (0 = most dangerous, 100 =
+// healthiest). The original schemes were all red/yellow/green and looked alike; these add genuinely
+// different palettes (ocean/neon/sunset/forest/greyscale/spectrum) so switching is clearly visible.
+// Anchors left to right = most dangerous to healthiest.
 const USAGE_PALETTES = {
-  health: ["#d90000", "#e6b450", "#10c378"], // 红 → 黄 → 绿（经典）
-  ocean: ["#1e3a8a", "#0ea5e9", "#67e8f9"], // 深蓝 → 天蓝 → 青
-  neon: ["#6d28d9", "#d946ef", "#f9a8d4"], // 紫 → 品红 → 粉
-  sunset: ["#7f1d1d", "#f97316", "#fbbf24"], // 暗红 → 橙 → 琥珀
-  forest: ["#14532d", "#16a34a", "#bef264"], // 深绿 → 绿 → 黄绿
-  mono: ["#3f3f46", "#a1a1aa", "#e4e4e7"], // 灰度：完全不抢视线
+  health: ["#d90000", "#e6b450", "#10c378"], // red -> yellow -> green (classic)
+  ocean: ["#1e3a8a", "#0ea5e9", "#67e8f9"], // dark blue -> sky blue -> cyan
+  neon: ["#6d28d9", "#d946ef", "#f9a8d4"], // purple -> magenta -> pink
+  sunset: ["#7f1d1d", "#f97316", "#fbbf24"], // dark red -> orange -> amber
+  forest: ["#14532d", "#16a34a", "#bef264"], // dark green -> green -> yellow-green
+  mono: ["#3f3f46", "#a1a1aa", "#e4e4e7"], // greyscale: does not draw the eye at all
 };
 
 function lerpPalette(anchors, pct) {
@@ -2648,11 +2687,11 @@ function lerpPalette(anchors, pct) {
   return rgbToHex(lerpRgb(a, b, pos - i));
 }
 
-// 光谱：直接按健康度转色相（0=红 → 120=绿 → 200=青），饱和度拉满，跟上面几套
-// "在两三个锚点之间插值"的做法完全不同，色彩跨度最大。
+// Spectrum: map health directly to hue (0 = red -> 120 = green -> 200 = cyan) at full saturation.
+// Entirely different from the "interpolate between two or three anchors" schemes above; the widest colour range.
 function spectrumColor(pct) {
   const p = Math.max(0, Math.min(100, pct));
-  const hue = (p / 100) * 200; // 0(红) → 200(青蓝)
+  const hue = (p / 100) * 200; // 0 (red) -> 200 (cyan-blue)
   const s = 0.72;
   const l = 0.48;
   const c = (1 - Math.abs(2 * l - 1)) * s;
@@ -2674,11 +2713,11 @@ try {
   const saved = localStorage.getItem(USAGE_SCHEME_KEY);
   if (saved && USAGE_SCHEMES.includes(saved)) usageScheme = saved;
 } catch (e) {
-  // 隐私模式/禁用站点数据：用默认方案
+  // Private mode / site data disabled: use the default scheme
 }
 
-// healthPct 是"健康度"（0=最危险 100=最健康），不是已用百分比——两种卡片的数字含义
-// 不同（剩余 vs 已用），但颜色一律按健康度算，见 usageCard 里的换算。
+// healthPct is "health" (0 = most dangerous, 100 = healthiest), not percentage used. The two card
+// kinds show different numbers (remaining vs used), but colour is always computed from health; see the conversion in usageCard.
 function usageBarColor(healthPct, isSession) {
   const p = Math.max(0, Math.min(100, healthPct));
   switch (usageScheme) {
@@ -2697,7 +2736,7 @@ function usageBarColor(healthPct, isSession) {
     case "mono":
       return lerpPalette(USAGE_PALETTES[usageScheme], p);
     default:
-      // 保持原来的行为：单次额度（剩余）分段色阶，其它（已用）连续渐变
+      // Keep the original behaviour: session quota (remaining) uses banded colours, the others (used) a continuous gradient
       return isSession ? conkyStepColor(p) : healthColor(p);
   }
 }
@@ -2714,10 +2753,10 @@ function setUsageScheme(value) {
   try {
     localStorage.setItem(USAGE_SCHEME_KEY, value);
   } catch (e) {
-    // 存不下就只在本次会话生效
+    // If it cannot be stored, it applies to this session only
   }
   syncUsageSchemeSelects();
-  // 两块额度面板重画一遍（接口服务端有 180s 缓存，这里再请求一次很便宜）
+  // Redraw both quota panels (the API server caches for 180 s, so another request here is cheap)
   refreshUsageBoard();
   refreshHomeAnthropicInfo();
 }
@@ -2727,24 +2766,26 @@ document.addEventListener("change", (ev) => {
   if (sel) setUsageScheme(sel.value);
 });
 
-// optional=true 的额度（按模型的 Sonnet/Opus 周额度）：接口没返回这个桶就整张卡不画——
-// 不是每个账号都有这两项（比如只有 Fable 限额的账号），画一张"-"只会让人以为出了错。
-// 单次额度和全模型周额度不是可选的：没数据也要占位，提示"这里本该有东西"。
+// Quotas with optional=true (per-model Sonnet/Opus weekly quotas): if the API does not return the
+// bucket, skip the whole card. Not every account has these two (e.g. accounts with only a Fable limit),
+// and a card showing "-" would only make people think something is broken. The session quota and the
+// all-models weekly quota are not optional: without data they still hold their place, signalling "something belongs here".
 function usageCard(label, bucket, windowMs, optional = false) {
   if (!bucket || bucket.utilization === null) {
     if (optional) return "";
     return `<div class="card"><div class="card-num">-</div><div class="card-label">${label}</div></div>`;
   }
-  // resets_at 已经是过去的时间点，说明这个窗口已经到期滚动了、只是还没有新请求让接口
-  // 刷新数字——接口这时候仍会把上一个窗口末尾的用量（比如刚好用满的 100%）原样返回，
-  // 按它算"剩余"就是 0%，跟实际（新窗口、什么都还没用）完全相反。到期的窗口按 0 已用
-  // 处理；另外把用量夹在 0~100 之间，接口偶尔给超过 100 的值也不会算出负的剩余。
+  // If resets_at is already in the past, the window has rolled over, but no new request has made the API
+  // refresh the numbers yet. The API still returns the usage at the end of the previous window (e.g. a
+  // full 100%), and computing "remaining" from it gives 0%, the exact opposite of reality (new window,
+  // nothing used yet). Treat an expired window as 0 used; also clamp usage to 0..100 so an occasional
+  // value above 100 from the API cannot produce negative remaining.
   const windowExpired = bucket.resetsAt && new Date(bucket.resetsAt).getTime() < Date.now();
   const usedPct = windowExpired ? 0 : Math.max(0, Math.min(100, Math.round(bucket.utilization)));
   const isSession = windowMs === SESSION_WINDOW_MS;
   const accent = usedPct >= 90 ? "accent-red" : usedPct >= 70 ? "accent-yellow" : "";
-  // 单次额度（session）显示"剩余百分比"，剩得越多越健康；其它额度依旧显示"已使用
-  // 百分比"，但颜色统一换算成"健康度"（剩余越多越绿）——数字含义不同，颜色逻辑一致。
+  // The session quota shows "percentage remaining" (more left = healthier); other quotas still show
+  // "percentage used", but their colour is converted to "health" too (more left = greener): the numbers mean different things, the colour logic is the same.
   const displayPct = isSession ? 100 - usedPct : usedPct;
   const healthPct = isSession ? displayPct : 100 - usedPct;
   const barColor = usageBarColor(healthPct, isSession);
@@ -2788,14 +2829,14 @@ async function refreshUsageBoard() {
   ].join("");
 }
 
-// 有些模型（目前观察到的是 Fable）没有专门的顶层字段，只在 limits[] 里挂一条按模型
-// 限额的记录——usage.js 已经把它摘出来放进 perModelWeekly 数组，这里按数组长度动态
-// 生成对应数量的卡片，不写死具体模型名。
+// Some models (Fable, so far) have no dedicated top-level field, only a per-model limit entry in
+// limits[]. usage.js already extracts these into the perModelWeekly array; here we generate as many
+// cards as the array has entries, without hard-coding model names.
 function perModelWeeklyCards(d) {
   return (d.perModelWeekly || []).map((m) => usageCard(t("status.usage.weeklyModel", { model: m.model }), m, WEEKLY_WINDOW_MS));
 }
 
-// ---------- 首页：Anthropic 账号信息（用量四件套 + limits 明细 + spend） ----------
+// ---------- Home: Anthropic account info (four usage figures + limits details + spend) ----------
 const SEVERITY_COLOR = { normal: "var(--green)", warning: "var(--yellow)", critical: "var(--red)" };
 function severityLabel(sev) {
   return t("home.anthropicAccount.severity." + sev) || sev || "-";
@@ -2805,9 +2846,10 @@ function limitKindLabel(kind) {
 }
 
 const SEVERITY_BAR_CLASS = { normal: "sev-normal", warning: "sev-warning", critical: "sev-critical", purple: "sev-purple" };
-// 选了非默认配色方案时，"已使用百分比"和"重置时间"这两种进度条也跟着走同一套颜色，
-// 否则页面上一半条是方案色、一半还是老的 severity 色，看着是两套东西。默认方案下
-// 保持原样（按 severity 上色），"级别"那一列本来就在说正常/警告/严重，不重复。
+// With a non-default colour scheme, the "percentage used" and "reset time" bars follow the same
+// colours too; otherwise half the bars use the scheme colour and half the old severity colour, which
+// looks like two different things. With the default scheme keep the original (severity colours): the
+// "level" column already says normal/warning/critical, no need to repeat it.
 function usageBarOverride(healthPct) {
   return usageScheme === "default" ? null : usageBarColor(healthPct, false);
 }
@@ -2834,8 +2876,8 @@ function neonPercentBar(percent, severity, big, colorOverride) {
     <span class="neon-bar-pct" style="color:${colorOverride};">${percent}%</span>`;
 }
 
-// 重置时间那一栏配的"这个窗口已经过去多少"紫色进度条——跟额度百分比不是一回事，
-// kind=session 用 5 小时窗口，其它（weekly_all/weekly_scoped）用 7 天窗口。
+// The purple "how much of this window has elapsed" bar in the reset-time column; not the same thing as
+// the quota percentage. kind=session uses the 5-hour window, the others (weekly_all/weekly_scoped) the 7-day window.
 function limitElapsedBar(resetsAt, kind) {
   if (!resetsAt) return "";
   const windowMs = kind === "session" ? SESSION_WINDOW_MS : WEEKLY_WINDOW_MS;
@@ -2860,16 +2902,18 @@ async function fetchAccountInfo() {
   return accountInfoCache;
 }
 
-// 账号信息打码开关：截图/录屏/结对编程的时候，姓名、邮箱、组织、套餐、计费方式这些
-// 一眼就能认出人的字段不该跟着一起曝出去（这个项目自己就在提交历史里踩过这个坑）。
-// 只影响本浏览器的显示，不改接口返回、不动任何数据；额度百分比不打码，那不是隐私。
+// Account info masking toggle: when taking screenshots, recording or pair programming, fields that
+// identify a person at a glance (name, email, organisation, plan, billing method) should not be
+// exposed along with them (this project has stepped on that rake in its own commit history). Affects
+// only this browser's display: it does not change API responses or any data. Quota percentages are not
+// masked; they are not private.
 const ACCOUNT_MASK_KEY = "cc_monitor_mask_account";
 const ACCOUNT_MASK_TEXT = "***";
 let accountMasked = false;
 try {
   accountMasked = localStorage.getItem(ACCOUNT_MASK_KEY) === "1";
 } catch (e) {
-  // 隐私模式/禁用了站点数据：当成没开，不影响页面工作
+  // Private mode / site data disabled: treat as off; the page still works
 }
 
 function syncAccountMaskBtns() {
@@ -2884,10 +2928,10 @@ function toggleAccountMask() {
   try {
     localStorage.setItem(ACCOUNT_MASK_KEY, accountMasked ? "1" : "0");
   } catch (e) {
-    // 存不下就只在本次会话生效
+    // If it cannot be stored, it applies to this session only
   }
   syncAccountMaskBtns();
-  // 用缓存里的账号信息就地重画，不用再打一次接口
+  // Redraw in place from the cached account info; no need to call the API again
   renderAccountProfileInto("anthropic-profile-box", "anthropic-profile-info", accountInfoCache);
   renderAccountProfileInto("status-profile-box", "status-profile-info", accountInfoCache);
 }
@@ -2896,9 +2940,9 @@ document.addEventListener("click", (ev) => {
   if (ev.target.closest(".account-mask-btn")) toggleAccountMask();
 });
 
-// 下钻列表里的"文件夹 · session · 完整路径"这一行：三段各自上色，长列表里扫起来
-// 比一整行灰字快得多。sessionId 字段名在不同接口里有 sessionId / session_id 两种写法，
-// 这里一并兼容。
+// The "folder · session · full path" line in drill-down lists: each part has its own colour, which is
+// much quicker to scan in a long list than one grey line. The session id field is named sessionId or
+// session_id depending on the API; both are handled here.
 function sessionCwdLine(r) {
   const sid = r.sessionId || r.session_id || "";
   const cwd = r.cwd || "";
@@ -2918,15 +2962,16 @@ function renderAccountProfileInto(boxId, listId, info) {
     box.hidden = true;
     return;
   }
-  // 打码只作用于能指认到具体某个人的三项：姓名、邮箱、组织名。截图和录屏的实际
-  // 需求是"别让人看出这是谁的号"，而不是把整块面板糊掉——套餐类型、额度档位、
-  // 计费方式、账号/订阅创建时间这些是账号属性不是身份，糊掉之后这块面板就没有
-  // 展示价值了。打码时统一显示成 ***，连原值长度都不泄露。
+  // Masking applies only to the three fields that point to a specific person: name, email, organisation
+  // name. What screenshots and recordings actually need is "nobody can tell whose account this is", not
+  // blurring the whole panel. Plan type, quota tier, billing method and account/subscription creation
+  // dates are account attributes, not identity; blurring them would leave the panel with nothing worth
+  // showing. Masked values always show as ***, so not even the original length leaks.
   const mask = (text) => (accountMasked ? ACCOUNT_MASK_TEXT : escapeHtml(text));
   const plain = (text) => escapeHtml(text);
-  // 标识符很长（UUID 36 位、machineID/userID 64 位十六进制），这一列只有 266px 放不下，
-  // 截成"头 8 … 尾 4"，完整值放进 title 供悬停查看。打码时 title 也必须一起打码，
-  // 否则遮了正文却能悬停看到原值，等于没遮。
+  // Identifiers are long (UUID 36 chars, machineID/userID 64 hex chars) and this column is only 266px
+  // wide, so truncate to "first 8 … last 4" and put the full value in title for hover. When masked, title
+  // must be masked too, otherwise the text is hidden but hovering reveals the original, which defeats the masking.
   const ident = (text) => {
     if (accountMasked) return ACCOUNT_MASK_TEXT;
     const v = String(text);
@@ -2945,13 +2990,13 @@ function renderAccountProfileInto(boxId, listId, info) {
   if (createdAt) rows.push({ label: t("home.anthropicAccount.profile.createdAt"), value: plain(createdAt) });
   const subCreatedAt = fmtAccountDate(info.subscriptionCreatedAt);
   if (subCreatedAt) rows.push({ label: t("home.anthropicAccount.profile.subCreatedAt"), value: plain(subCreatedAt) });
-  // 标识符：默认显示，跟着"隐藏敏感信息"一起打码。
+  // Identifiers: shown by default, masked together with "hide sensitive info".
   if (info.accountUuid) rows.push({ label: t("home.anthropicAccount.profile.accountUuid"), value: ident(info.accountUuid) });
   if (info.organizationUuid) rows.push({ label: t("home.anthropicAccount.profile.orgUuid"), value: ident(info.organizationUuid) });
   if (info.userID) rows.push({ label: t("home.anthropicAccount.profile.userId"), value: ident(info.userID) });
   if (info.machineID) rows.push({ label: t("home.anthropicAccount.profile.machineId"), value: ident(info.machineID) });
-  // 本机的 Claude Code 状态，不是"账号是谁"。这几项一律明文——它们不是身份信息，
-  // 而且正是排查 hook 失灵时要看的东西，遮掉没有意义。
+  // This machine's Claude Code status, not "who the account is". These are always shown in clear: they
+  // are not identity information, and they are exactly what you need when troubleshooting a broken hook; masking them is pointless.
   if (info.claudeCodeVersion) {
     const v = info.claudeCodeVersion;
     rows.push({
@@ -2985,8 +3030,8 @@ async function refreshAccountProfile() {
   renderAccountProfileInto("status-profile-box", "status-profile-info", info);
 }
 
-// 额度明细（limits）表格——首页和状态信息页各有一份 DOM（同一份数据渲染两次），
-// 状态信息页那份用加长加粗的 neon-bar-lg，首页保留原来的小号版本。
+// Quota details (limits) table: Home and the Status page each have their own DOM (the same data rendered
+// twice). The Status page copy uses the longer, bolder neon-bar-lg; Home keeps the original small version.
 function renderLimitsInto(box, list, limits) {
   if (!box || !list) return;
   if (!limits || limits.length === 0) {
@@ -3007,10 +3052,11 @@ function renderLimitsInto(box, list, limits) {
             (l) => `
           <tr>
             <td>${escapeHtml(limitKindLabel(l.kind))}${l.scopeModel ? ` (${escapeHtml(l.scopeModel)})` : ""}</td>
-            <!-- .neon-bar-cell 要包一层 div，不能直接扣在 <td> 上：display:flex 一旦
-                 直接加在 <td> 上，这个单元格就不再随行内最高的兄弟单元格（"重置时间"
-                 那一列带了两行内容，行高被撑高）一起拉伸到同样高度，百分比条就贴在
-                 单元格顶部、下面多出一截空白，看起来跟同一行的其它列错位。 -->
+            <!-- .neon-bar-cell must be wrapped in a div, not put on the <td> itself: once display:flex
+                 is applied directly to a <td>, the cell no longer stretches to the height of the tallest
+                 sibling cell in the row (the "reset time" column has two lines and makes the row taller),
+                 so the percentage bar sticks to the top of the cell with empty space below and looks
+                 misaligned with the other columns of the same row. -->
             <td><div class="neon-bar-cell">${neonPercentBar(l.percent, l.severity, big, usageBarOverride(100 - (l.percent || 0)))}</div></td>
             <td><span style="color:${SEVERITY_COLOR[l.severity] || "var(--text-dim)"}">${escapeHtml(severityLabel(l.severity))}</span></td>
             <td class="dd-mono">${l.resetsAt ? fmtResetAt(l.resetsAt) : "-"}${limitElapsedBar(l.resetsAt, l.kind)}</td>
@@ -3022,8 +3068,8 @@ function renderLimitsInto(box, list, limits) {
     </table>`;
 }
 
-// 首页态势摘要条最右一张卡：单次额度剩余百分比 + 迷你 neon 条 + 重置倒计时。
-// 跟下面账号区里那张大卡是同一份数据、同一套 conky 分段配色，只是尺寸缩小。
+// Rightmost card of the Home status summary: session quota remaining percentage + mini neon bar + reset
+// countdown. Same data and same conky banded colours as the large card in the account section below, just smaller.
 function renderStripUsage(bucket) {
   const el = document.getElementById("strip-usage");
   if (!el) return;
@@ -3093,13 +3139,13 @@ async function refreshHomeAnthropicInfo() {
   } else {
     spendBox.hidden = true;
   }
-  // 左边那个账号信息盒子：账号资料和 spend 两块都没内容（比如没登录凭证）就整个收起，
-  // 不留一个空框。
+  // The account info box on the left: when both the account details and spend are empty (e.g. no login
+  // credentials), collapse it entirely instead of leaving an empty frame.
   const accountCol = document.querySelector(".home-account .account-col");
   if (accountCol) accountCol.hidden = document.getElementById("anthropic-profile-box").hidden && spendBox.hidden;
 }
 
-// ---------- claude 进程运行身份检测 ----------
+// ---------- Detect the identity the claude process runs as ----------
 let identityLastResult = null;
 async function refreshIdentityCard() {
   const result = await api("/api/claude-processes");
@@ -3107,9 +3153,9 @@ async function refreshIdentityCard() {
   identityLastResult = result;
   document.getElementById("stat-identity-total").textContent = String(result.total);
 
-  // "监测到的 Claude Code 会话总数"卡片上的迷你心跳徽章：只要有一个进程正处于
-  // working 状态就露出来，给首页一个"现在有事情正在发生"的一眼信号；全都 idle/没有
-  // 进程的时候完全不占地方（隐藏），不是每次都摆一个"死气沉沉"的图标出来。
+  // Mini heartbeat badge on the "Claude Code sessions detected" card: shown as soon as any process is in
+  // the working state, giving Home an at-a-glance "something is happening right now" signal. When all
+  // are idle or there are no processes it takes no space at all (hidden), rather than always showing a lifeless icon.
   const vitalBadge = document.getElementById("stat-sessions-vital");
   if (vitalBadge) {
     const anyWorking = result.processes.some((p) => p.status === "working");
@@ -3142,7 +3188,7 @@ async function refreshIdentityCard() {
   }
 }
 
-// ---------- Claude Code 网络流量 ----------
+// ---------- Claude Code network traffic ----------
 function formatBytes(n) {
   if (n === null || n === undefined) return "-";
   if (n < 1024) return `${n} B`;
@@ -3238,13 +3284,13 @@ async function refreshNetworkTraffic() {
   }
 }
 
-// ---------- 操作时间线 ----------
+// ---------- Operation timeline ----------
 let sessionTimeline = null;
 function ensureSessionTimeline() {
   if (sessionTimeline || !window.SessionTimeline) return;
   sessionTimeline = new SessionTimeline(document.getElementById("timeline-canvas"), document.getElementById("timeline-tooltip"));
-  // 点泳道 = 看这个会话的完整操作序列：直接复用 Log 审计页现成的按会话过滤，
-  // 不另外造一个逐条事件的渲染（fmt.describe() 的摘要/高亮都在那边）。
+  // Clicking a lane = view that session's full operation sequence: reuse the Audit Log page's existing
+  // per-session filter instead of building another per-event renderer (fmt.describe()'s summaries/highlighting live there).
   sessionTimeline.onLaneClick = (sessionId, range) => {
     document.getElementById("timeline-tooltip").hidden = true;
     openSessionFlow(sessionId, range);
@@ -3277,8 +3323,8 @@ function timelineBucketLabel(bucketMs) {
   return `${bucketMs / 3600000} ${zh ? "小时" : "h"}`;
 }
 
-// 只在时间线页可见时才真正去拉数据——这个接口要把最近几十个会话的事件都捞一遍
-// 分桶，比其它轮询重，切到别的页时没必要每 15 秒白算一次。
+// Fetch data only while the Timeline page is visible: this endpoint scans and buckets the events of the
+// last few dozen sessions, heavier than other polls, so there is no point recomputing it every 15 seconds while another page is open.
 async function refreshTimeline() {
   if (!document.getElementById("view-timeline").classList.contains("active")) return;
   ensureSessionTimeline();
@@ -3286,8 +3332,8 @@ async function refreshTimeline() {
   const range = document.getElementById("timeline-range").value;
   const data = await api(`/api/timeline?range_minutes=${encodeURIComponent(range)}&lanes=50`);
   if (!data) return;
-  // 只保留窗口内真的有操作的会话——listSessions 按最后活跃排序取的前 N 个里，
-  // 可能有几个最后一次操作早于窗口起点，画出来就是一条空泳道，只会占地方。
+  // Keep only sessions with operations inside the window: among the top N that listSessions returns by
+  // last activity, some may have their last operation before the window start; drawn, they are empty lanes that just take up space.
   data.lanes = data.lanes.filter((l) => l.buckets.length > 0);
   const empty = document.getElementById("timeline-empty");
   empty.hidden = data.lanes.length > 0;
@@ -3298,19 +3344,19 @@ async function refreshTimeline() {
 
 document.getElementById("timeline-range").addEventListener("change", refreshTimeline);
 
-// 两张画布（时间线、流程图小地图）的颜色是渲染时从 CSS 变量现读的，切主题后要重画一次，
-// 不然还是上一套主题的颜色（暗色主题下深色文字直接看不见）
+// The two canvases (timeline, flow-chart minimap) read their colours from CSS variables at render time,
+// so redraw them after a theme switch, otherwise they keep the previous theme's colours (dark text becomes invisible on the dark theme)
 new MutationObserver(() => {
   if (sessionTimeline) sessionTimeline.render();
   if (sessionFlowGraph) sessionFlowGraph._drawMinimap();
 }).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
 
-// ---------- 会话操作流程图 ----------
+// ---------- Session flow chart ----------
 let sessionFlowGraph = null;
 let flowSessionId = null;
 let flowLive = false;
 let flowData = null;
-let flowDetailState = null; // {node, turn}：切语言时按当前语言重画详情面板
+let flowDetailState = null; // {node, turn}: redraw the detail panel in the current language on a language switch
 
 function openLogsForSession(sessionId) {
   document.querySelector('.tab-btn[data-tab="logs"]').click();
@@ -3350,7 +3396,7 @@ function fdRow(k, vHtml) {
 
 function flowDurationText(msv) {
   if (msv === null || msv === undefined) return "";
-  // hook 时间戳只精确到秒
+  // hook timestamps are only accurate to the second
   if (msv < 1000) return "< 1 s";
   return Math.round(msv / 1000) + " s";
 }
@@ -3413,7 +3459,7 @@ function renderFlowDetail(node, turn) {
   }
 }
 
-// 标题栏会话名 + 提示条：跟流程图本体分开，切语言时不用重新请求就能重画
+// Title bar session name + hint bar: separate from the flow chart itself, so a language switch can redraw them without a new request
 function renderFlowChrome(data) {
   const label = [folderName(data.cwd), modelShort(data.model), data.sessionId.slice(0, 8) + "…"].filter(Boolean).join(" · ");
   document.getElementById("flow-session-label").textContent = label;
@@ -3437,8 +3483,9 @@ async function loadSessionFlow({ keepView }) {
   return data;
 }
 
-// 切语言：用手上的数据按新语言重画，不重新请求（切语言会触发一轮全量刷新，
-// 流程图请求排在后面要等好一会儿，这段时间里卡片还是旧语言）
+// Language switch: redraw in the new language from the data we already have, without a new request (a
+// language switch triggers a full refresh round, and the flow-chart request is queued late, so for a
+// good while the cards would still be in the old language)
 function rerenderSessionFlowText() {
   if (!flowData || !sessionFlowGraph || document.getElementById("flow-section").hidden) return;
   renderFlowChrome(flowData);
@@ -3465,7 +3512,7 @@ async function openSessionFlow(sessionId, range) {
   if (data && range) sessionFlowGraph.focusRange(range.startMs, range.endMs);
 }
 
-// 进行中的会话跟着时间线一起每 15 秒刷新；已经结束的会话不用反复拉
+// Sessions in progress refresh every 15 seconds with the timeline; finished sessions need no repeated fetching
 async function refreshSessionFlow() {
   if (!flowSessionId || !flowLive || document.getElementById("flow-section").hidden) return;
   if (!document.getElementById("view-timeline").classList.contains("active")) return;
@@ -3482,7 +3529,7 @@ document.getElementById("flow-open-logs").addEventListener("click", () => {
   if (flowSessionId) openLogsForSession(flowSessionId);
 });
 
-// ---------- 启动 ----------
+// ---------- Startup ----------
 function refreshEverythingNow() {
   refreshSessionList();
   refreshLogSessionOptions();
@@ -3503,19 +3550,19 @@ function refreshEverythingNow() {
   refreshTimeline();
 }
 
-// 浏览器会把后台标签页的 setInterval 大幅节流（甚至几分钟才跑一次）来省电，
-// 所以只靠定时轮询，标签页切到后台的这段时间里发生的新会话/新事件会一直显示
-// "旧"的，直到下一次真正被节流放行的 tick。切回前台的瞬间强制刷新一次，
-// 保证"看的时候"一定是最新的，不用等轮询节流器恢复正常节奏。
+// Browsers heavily throttle setInterval in background tabs (sometimes to once every few minutes) to
+// save power. With polling alone, new sessions/events that happen while the tab is in the background
+// keep showing as stale until the next tick the throttler lets through. Force a refresh the moment the
+// tab comes back to the foreground, so what you look at is always current without waiting for polling to recover.
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") refreshEverythingNow();
 });
 window.addEventListener("focus", refreshEverythingNow);
 
-// ---------- 语言 / 主题切换 ----------
+// ---------- Language / theme switching ----------
 document.getElementById("theme-select").addEventListener("change", (ev) => applyTheme(ev.target.value));
 
-// ---------- 外观设置弹窗（主题色块 / 字体 / 字号） ----------
+// ---------- Appearance settings dialog (theme swatches / font / font size) ----------
 function buildThemeSwatchGrid() {
   const grid = document.getElementById("theme-swatch-grid");
   grid.innerHTML = THEMES.map(
@@ -3554,8 +3601,8 @@ document.getElementById("lang-toggle-btn").addEventListener("click", () => {
   syncAccountMaskBtns();
   syncNewSessionModalText();
   setGpuState(gpuState);
-  // 静态文案已经在 setLang -> applyStaticI18n 里刷新了；已经拼好 append 到列表里的
-  // 日志/Tap 条目不会自动重新翻译（是已经生成的 DOM，不是"状态"），干脆清空重新拉一遍。
+  // Static text was already refreshed in setLang -> applyStaticI18n. Log/Tap entries already appended to
+  // the lists are not re-translated automatically (they are generated DOM, not "state"), so clear them and fetch again.
   lastLogId = 0;
   document.getElementById("log-list-full").innerHTML = "";
   tapNextLine = 0;
@@ -3597,13 +3644,13 @@ async function bootstrap() {
   setInterval(pollTap, 2000);
   setInterval(refreshOverview, 5000);
   setInterval(refreshStatusBoard, 5000);
-  setInterval(refreshUsageBoard, 30000); // 后端本身有 180s 缓存，前端更不用问太勤
+  setInterval(refreshUsageBoard, 30000); // the backend already caches for 180 s, the front end need not ask often
   setInterval(refreshHomeAnthropicInfo, 30000);
   setInterval(refreshTerminalStatusline, 5000);
   setInterval(refreshAuditState, 5000);
-  setInterval(refreshRemoteAccessState, 15000); // 安全相关但很少变，不用跟审计状态一样勤
-  setInterval(refreshIdentityCard, 15000); // 进程身份也不会频繁变，跟远程访问开关一个节奏
-  setInterval(refreshApprovals, 2000); // 这几个是卡着等结果的，轮询间隔比其它都短
+  setInterval(refreshRemoteAccessState, 15000); // security-related but rarely changes; no need to poll as often as the audit state
+  setInterval(refreshIdentityCard, 15000); // the process identity rarely changes either; same pace as the remote access toggle
+  setInterval(refreshApprovals, 2000); // these block waiting for an answer, so the poll interval is shorter than all others
   setInterval(refreshNetworkTraffic, 10000);
   setInterval(refreshTimeline, 15000);
   setInterval(refreshSessionFlow, 15000);
